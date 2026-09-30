@@ -1,7 +1,7 @@
 name: Build worldwide offline regions
 on:
   push:
-    tags: ['offline-bootstrap-andorra']
+    tags: ['offline-bootstrap-andorra', 'offline-bootstrap-andorra-*']
   workflow_dispatch:
     inputs:
       regions:

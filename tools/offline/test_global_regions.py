@@ -1,5 +1,8 @@
 import importlib.util
 import json
+import hashlib
+from unittest.mock import patch
+from urllib.error import HTTPError
 from pathlib import Path
 import tempfile
 import unittest
@@ -52,3 +55,57 @@ class GlobalPipelineTest(unittest.TestCase):
             second.write_text(json.dumps({'schemaVersion': 1, 'regions': [entry]}))
             with self.assertRaises(ValueError):
                 global_regions.merge([first, second])
+
+
+class DatedExtractTest(unittest.TestCase):
+    latest = 'https://download.geofabrik.de/europe/andorra-latest.osm.pbf'
+    dated = 'https://download.geofabrik.de/europe/andorra-260929.osm.pbf'
+    html = '<a href="andorra-260929.osm.pbf">PBF</a><a href="andorra-260929.osm.pbf.md5">MD5</a>'
+
+    def test_selects_newest_valid_matching_pair(self):
+        html = self.html + '<a href="andorra-260928.osm.pbf">old</a><a href="andorra-260928.osm.pbf.md5">old md5</a>'
+        html += '<a href="andorra-261332.osm.pbf">invalid</a><a href="andorra-261332.osm.pbf.md5">md5</a>'
+        html += '<a href="andorra-261001.osm.pbf">no checksum</a>'
+        html += '<a href="https://evil.example/andorra-261002.osm.pbf">evil</a><a href="https://evil.example/andorra-261002.osm.pbf.md5">evil md5</a>'
+        html += '<a href="france-261002.osm.pbf">other region</a><a href="france-261002.osm.pbf.md5">other md5</a>'
+        self.assertEqual(global_regions.dated_extract(self.latest, html), self.dated)
+        with self.assertRaises(ValueError):
+            global_regions.dated_extract(self.latest, '<a href="andorra-261001.osm.pbf">no checksum</a>')
+        with self.assertRaises(ValueError):
+            global_regions.dated_extract(self.latest, 'x' * (2 * 1024 * 1024 + 1))
+
+    def test_redirect_loop_fallback_downloads_exact_pair(self):
+        requested = []
+        content = b'OSM test bytes'
+        def fake_download(url, path, maximum):
+            requested.append(url)
+            if url == self.latest:
+                raise HTTPError(url, 301, 'redirect loop', {}, None)
+            if url.endswith('.html'):
+                path.write_text(self.html)
+            elif url == self.dated:
+                path.write_bytes(content)
+            elif url == self.dated + '.md5':
+                path.write_text(hashlib.md5(content).hexdigest() + '  andorra-260929.osm.pbf')
+            else:
+                self.fail('Unexpected download URL: ' + url)
+        with tempfile.TemporaryDirectory() as temporary, patch.object(global_regions, 'download', side_effect=fake_download):
+            root = Path(temporary)
+            actual = global_regions.download_extract(self.latest, root / 'region.osm.pbf', root / 'checksum.md5', 4096)
+        self.assertEqual(actual, self.dated)
+        self.assertEqual(requested[-2:], [self.dated, self.dated + '.md5'])
+
+    def test_size_budget_error_does_not_fallback(self):
+        with patch.object(global_regions, 'download', side_effect=ValueError('input budget')) as downloader:
+            with self.assertRaises(ValueError):
+                global_regions.download_extract(self.latest, Path('unused'), Path('unused.md5'), 1)
+            self.assertEqual(downloader.call_count, 1)
+
+    def test_wrong_dated_checksum_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pbf, checksum = root / 'region.osm.pbf', root / 'checksum.md5'
+            pbf.write_bytes(b'test')
+            checksum.write_text('0' * 32)
+            with self.assertRaises(global_regions.ExtractChecksumError):
+                global_regions.verify_extract(pbf, checksum)

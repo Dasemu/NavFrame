@@ -2,6 +2,8 @@
 """Discover/build bounded Geofabrik regions and merge immutable catalog fragments."""
 import argparse
 import hashlib
+from datetime import date
+from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
@@ -10,6 +12,8 @@ import sqlite3
 import subprocess
 import sys
 from urllib.request import urlopen
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin
 
 INDEX = 'https://download.geofabrik.de/index-v1-nogeom.json'
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,10 +26,12 @@ def official_url(url):
 
 
 def download(url, path, maximum):
+    official_url(url)
     path.parent.mkdir(parents=True, exist_ok=True)
     staging = path.with_suffix(path.suffix + '.part')
     try:
         with urlopen(url, timeout=120) as source, staging.open('wb') as target:
+            official_url(source.geturl())
             if int(source.headers.get('Content-Length', 0)) > maximum:
                 raise ValueError('Extract exceeds input budget; select a smaller region or larger runner')
             total = 0
@@ -37,6 +43,78 @@ def download(url, path, maximum):
         staging.replace(path)
     finally:
         staging.unlink(missing_ok=True)
+
+
+class ExtractChecksumError(ValueError):
+    """Upstream bytes and their paired checksum do not agree."""
+
+
+def verify_extract(pbf, checksum):
+    fields = checksum.read_text().split()
+    expected = fields[0] if fields else ''
+    digest = hashlib.md5()
+    with pbf.open('rb') as stream:
+        while block := stream.read(1024 * 1024):
+            digest.update(block)
+    if not re.fullmatch(r'[a-fA-F0-9]{32}', expected) or digest.hexdigest() != expected.lower():
+        raise ExtractChecksumError('Geofabrik PBF checksum mismatch')
+
+
+def dated_extract(latest, html):
+    """Choose newest valid dated PBF/checksum pair linked on this region's page."""
+    official_url(latest)
+    if not latest.endswith('-latest.osm.pbf'):
+        raise ValueError('Expected latest extract URL')
+    if len(html.encode('utf-8')) > 2 * 1024 * 1024:
+        raise ValueError('Region HTML exceeds discovery budget')
+    stem = latest.removesuffix('-latest.osm.pbf')
+    page = stem + '.html'
+    links = set()
+
+    class Links(HTMLParser):
+        def handle_starttag(self, tag, attributes):
+            if tag.lower() != 'a':
+                return
+            for key, value in attributes:
+                if key.lower() == 'href' and value and '..' not in value:
+                    links.add(urljoin(page, value))
+
+    parser = Links()
+    parser.feed(html)
+    candidates = []
+    pattern = re.compile(re.escape(stem) + r'-(\d{6})\.osm\.pbf')
+    for link in links:
+        match = pattern.fullmatch(link)
+        if match is None or link + '.md5' not in links:
+            continue
+        stamp = match[1]
+        try:
+            when = date(2000 + int(stamp[:2]), int(stamp[2:4]), int(stamp[4:6]))
+        except ValueError:
+            continue
+        candidates.append((when, official_url(link)))
+    if not candidates:
+        raise ValueError('Official region page has no dated PBF/checksum pair')
+    return max(candidates)[1]
+
+
+def download_extract(latest, pbf, checksum, maximum):
+    try:
+        download(latest, pbf, maximum)
+        download(latest + '.md5', checksum, 4096)
+        verify_extract(pbf, checksum)
+        return latest
+    except (URLError, TimeoutError, ExtractChecksumError) as error:
+        print(f'Latest extract unavailable ({error}); resolving official dated extract', file=sys.stderr)
+        if isinstance(error, HTTPError):
+            error.close()
+    page = pbf.parent / 'region-source.html'
+    download(latest.removesuffix('-latest.osm.pbf') + '.html', page, 2 * 1024 * 1024)
+    source = dated_extract(latest, page.read_text(encoding='utf-8'))
+    download(source, pbf, maximum)
+    download(source + '.md5', checksum, 4096)
+    verify_extract(pbf, checksum)
+    return source
 
 
 def regions(index):
@@ -97,16 +175,8 @@ def build(args, selected):
     work = args.output / 'work'
     work.mkdir(parents=True, exist_ok=True)
     pbf, poly = work / 'region.osm.pbf', work / 'region.poly'
-    download(selected['source'], pbf, args.max_input_mib * 1024 * 1024)
     checksum = work / 'region.osm.pbf.md5'
-    download(selected['source'] + '.md5', checksum, 4096)
-    expected = checksum.read_text().split()[0]
-    digest = hashlib.md5()
-    with pbf.open('rb') as stream:
-        while block := stream.read(1024 * 1024):
-            digest.update(block)
-    if not re.fullmatch(r'[a-fA-F0-9]{32}', expected) or digest.hexdigest() != expected.lower():
-        raise ValueError('Geofabrik PBF checksum mismatch (possibly daily rotation); rerun')
+    source_url = download_extract(selected['source'], pbf, checksum, args.max_input_mib * 1024 * 1024)
     download(selected['coverage'], poly, 16 * 1024 * 1024)
     slug = selected['id'].replace('/', '-')
     archive = args.output / f"gf-{slug}-{args.version}.navframe"
@@ -114,7 +184,8 @@ def build(args, selected):
                     '--id', f"gf-{slug}", '--name', selected['name'], '--version', args.version,
                     '--pbf', str(pbf), '--coverage-poly', str(poly), '--coverage-url', selected['coverage'],
                     '--planetiler-jar', str(args.planetiler_jar), '--java-heap', args.java_heap,
-                    '--source-url', selected['source'], '--output', str(archive), '--work', str(work)], check=True)
+                    '--python', sys.executable,
+                    '--source-url', source_url, '--output', str(archive), '--work', str(work)], check=True)
     if archive.stat().st_size >= args.max_package_mib * 1024 * 1024:
         raise ValueError('Package exceeds publication budget; select a smaller region')
     catalog_path = args.output / 'regional-catalog.json'

@@ -6,7 +6,7 @@ The app installs individual `.navframe` packages containing a PMTiles map, a SQL
 
 In `Dasemu/NavFrame`, open **Actions → Build worldwide offline regions → Run workflow**. Enter Geofabrik IDs such as `andorra,act,cantabria,us/california`. First run with **publish = false** to inspect artifacts; run with **publish = true** to publish packages. Each run builds at most 32 independent regions, with two concurrent builders and a 330-minute timeout per builder. No planet download or full-world local build is performed.
 
-One-time bootstrap with SSH push access (no local GitHub CLI/token required): after pushing the project to the default branch, create and push the exact tag below. Only this tag triggers an automatic **Andorra** build with publication enabled; other tag or branch pushes do not trigger the offline builder. The catalog becomes available after that workflow succeeds.
+One-time bootstrap with SSH push access (no local GitHub CLI/token required): after pushing the project to the default branch, create and push the exact tag below. Only this tag and `offline-bootstrap-andorra-*` retry tags trigger an automatic **Andorra** build with publication enabled; other tag or branch pushes do not trigger the offline builder. The catalog becomes available after that workflow succeeds. For a retry after fixing a failed run, push a new tag such as `offline-bootstrap-andorra-v2`; preserve existing tags.
 
 ```sh
 git tag offline-bootstrap-andorra
@@ -29,7 +29,7 @@ curl --fail --location --output planetiler.jar https://github.com/onthegomap/pla
 python3 tools/offline/global-regions.py build --region andorra --version 20260930.1 --planetiler-jar planetiler.jar --output build/offline/andorra
 ```
 
-`build-region.py` also accepts existing PBF/.poly/PMTiles inputs for network-free builds. Planetiler and POI dependencies are pinned by version. Build provenance records the recipe, upstream PBF SHA-256, coverage SHA-256, Planetiler binary SHA-256 and PBF replication timestamp. Geofabrik's `latest` source URL rotates daily; the downloaded PBF is checked against its official MD5 sidecar, and its actual bytes are identified by SHA-256. A daily rotation during download fails rather than accepting a mismatch. OSM's replication timestamp identifies data freshness, while the package version identifies a publication.
+`build-region.py` also accepts existing PBF/.poly/PMTiles inputs for network-free builds. Planetiler and POI dependencies are pinned by version. Build provenance records the recipe, upstream PBF SHA-256, coverage SHA-256, Planetiler binary SHA-256 and PBF replication timestamp. Geofabrik's `latest` source URL rotates daily; the downloaded PBF is checked against its official MD5 sidecar, and its actual bytes are identified by SHA-256. If the latest link fails (including redirect loops) or its checksum mismatches during daily rotation, the builder reads the bounded official region HTML and selects its newest dated PBF with a matching-basename checksum link. It downloads and verifies that exact pair and records the actual dated extract URL in the manifest. An invalid checksum on the fallback fails the build. OSM's replication timestamp identifies data freshness, while the package version identifies a publication.
 
 ## Catalog and publication contract
 
