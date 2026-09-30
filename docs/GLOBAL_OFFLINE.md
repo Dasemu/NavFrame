@@ -6,6 +6,14 @@ The app installs individual `.navframe` packages containing a PMTiles map, a SQL
 
 In `Dasemu/NavFrame`, open **Actions → Build worldwide offline regions → Run workflow**. Enter Geofabrik IDs such as `andorra,act,cantabria,us/california`. First run with **publish = false** to inspect artifacts; run with **publish = true** to publish packages. Each run builds at most 32 independent regions, with two concurrent builders and a 330-minute timeout per builder. No planet download or full-world local build is performed.
 
+The frozen `tools/offline/campaign-global-2026-09.json` contains the global leaf-region campaign, split into 17 tag-triggered batches. It excludes parent extracts to avoid overlapping coverage and excludes packages already present when the manifest was created. Push the batch tags to queue all remaining eligible regions:
+
+```sh
+for n in $(seq -w 1 17); do git push origin "offline-global-2026-09-batch-0$n"; done
+```
+
+Each batch publishes successful packages independently; oversized or otherwise unsupported extracts fail as individual matrix jobs. GitHub's catalog concurrency allows one running and one pending refresh, so after all batches complete, run **Actions → Refresh offline package catalog → Run workflow** once to ensure the index includes every successful package.
+
 One-time bootstrap with SSH push access (no local GitHub CLI/token required): after pushing the project to the default branch, create and push the exact tag below. Only this tag and `offline-bootstrap-andorra-*` retry tags trigger an automatic **Andorra** build with publication enabled; other tag or branch pushes do not trigger the offline builder. The catalog becomes available after that workflow succeeds. For a retry after fixing a failed run, push a new tag such as `offline-bootstrap-andorra-v2`; preserve existing tags.
 
 ```sh
@@ -35,13 +43,13 @@ python3 tools/offline/global-regions.py build --region andorra --version 2026093
 
 Every package publishes a release `offline-gf-REGION-RUNID.ATTEMPT` with the package and `regional-catalog.json`. The workflow creates a draft, uploads assets, then publishes it; it never replaces package assets. Published region releases should be treated as immutable. Package manifests retain schema version 1 and stable IDs `gf-REGION` (slashes in upstream IDs become hyphens, e.g. `us/california` → `gf-us-california`).
 
-The serialized catalog job reads **all** published region releases, merges their fragments and selects the latest publication per region. The merged index uses compact JSON and is checked against a 32 MiB / 4,096-entry Android discovery budget before publication.
+The catalog job reads **all** published region releases, merges their fragments and selects the latest publication per region. Concurrent campaign runs may coalesce pending catalog refreshes; use the manual refresh workflow after a large campaign completes. The merged index uses compact JSON and is checked against a 32 MiB / 4,096-entry Android discovery budget before publication.
 
 The mutable discovery index is:
 
 `https://github.com/Dasemu/NavFrame/releases/download/offline-catalog/regional-catalog.json`
 
-This index release must remain mutable so its asset can be updated; do not enable repository-wide release immutability without moving the index to another host. The individual package URLs remain versioned. Historical package releases remain available. Catalog rebuilding is safe across concurrent region batches because the index job is serialized. A failed region does not prevent catalog rebuilding for successful releases.
+This index release must remain mutable so its asset can be updated; do not enable repository-wide release immutability without moving the index to another host. The individual package URLs remain versioned. Historical package releases remain available. Catalog rebuilding is serialized. A failed region does not prevent catalog rebuilding for successful releases.
 
 Catalog format:
 

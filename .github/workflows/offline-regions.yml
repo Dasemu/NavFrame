@@ -1,7 +1,7 @@
 name: Build worldwide offline regions
 on:
   push:
-    tags: ['offline-bootstrap-andorra', 'offline-bootstrap-andorra-*']
+    tags: ['offline-bootstrap-andorra', 'offline-bootstrap-andorra-*', 'offline-global-2026-09-batch-*']
   workflow_dispatch:
     inputs:
       regions:
@@ -23,9 +23,14 @@ jobs:
       - uses: actions/checkout@v4
       - id: matrix
         env:
+          CAMPAIGN_TAG: ${{ github.ref_name }}
           REGION_IDS: ${{ github.event_name == 'push' && 'andorra' || inputs.regions }}
         run: |
-          value=$(python3 tools/offline/global-regions.py matrix "$REGION_IDS")
+          if [[ "$CAMPAIGN_TAG" == offline-global-2026-09-batch-* && "${{ github.event_name }}" == push ]]; then
+            value=$(python3 tools/offline/campaign.py matrix "$CAMPAIGN_TAG")
+          else
+            value=$(python3 tools/offline/global-regions.py matrix "$REGION_IDS")
+          fi
           echo "value=$value" >> "$GITHUB_OUTPUT"
   build:
     needs: plan

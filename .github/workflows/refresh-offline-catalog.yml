@@ -1,0 +1,19 @@
+name: Refresh offline package catalog
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: offline-catalog-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild index from all published regional releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/offline/publish-catalog.py
