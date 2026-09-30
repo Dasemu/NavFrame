@@ -1,0 +1,70 @@
+# Routing and guidance (English summary)
+
+Route calculation uses a configurable HTTPS Valhalla-compatible service. The default FOSSGIS endpoint is a public demo with fair-use/rate limits, not a production SLA. Valhalla asks applications published to end users to notify the project and include an identifying `X-Client-Id`; see the [official Valhalla documentation](https://valhalla.github.io/valhalla/). A route request sends the selected origin and destination to the configured service. Do not submit sensitive coordinates to a public endpoint.
+
+NavFrame does not contain an offline routing graph. It can follow previously calculated route geometry with GPS, but calculating or recalculating a route requires network access. The `motorcycle` profile does not certify legal access, surface quality, or motorcycle suitability. ETA and GPS-based turn progression are estimates and require physical validation. Detailed implementation and historical test notes follow in Spanish.
+
+# Detailed routing notes (Spanish)
+
+Investigación y contrato del 2026-09-29. NavFrame solicita una ruta al seleccionar un destino explícito o pulsar calcular, con origen DEMO/GPS utilizable. La vista previa precede al inicio del guiado; estas acciones no sustituyen automáticamente una ruta activa. El guiado GPS puede solicitar un recálculo tras desvío sostenido o una acción manual. El servicio y UI Android poseen la solicitud, cancelación y vista previa. La fase 5 incorporó vista previa; la fase 6 añade guiado básico puro, simulación sobre la ruta y política conservadora de desvío/recálculo. No incorpora búsqueda de direcciones, voz ni map matching vial avanzado.
+
+## Servicio inicial y privacidad
+
+Endpoint configurable inicial: `https://valhalla1.openstreetmap.de/route`, demo pública de FOSSGIS; `valhalla.openstreetmap.de` es el frontend, no el endpoint API elegido. El [README oficial Valhalla](https://github.com/valhalla/valhalla) documenta el servicio y exige uso razonable; pide identificar aplicaciones que se publiquen a usuarios mediante `X-Client-Id` y avisar en sus Discussions. No se ha contactado a terceros ni se publica esta app como servicio para usuarios externos. Antes de distribución pública, resolver ese requisito o usar un servidor propio.
+
+El [OpenAPI oficial](https://github.com/valhalla/valhalla/blob/master/docs/docs/api/openapi.yaml) documenta HTTP429 y límite por usuario de **una petición por segundo**. El adapter debe serializar solicitudes, esperar al menos ese intervalo, enviar User-Agent identificativo y `X-Client-Id`, y mostrar errores. El recálculo de fase 6 añade cooldown mínimo de 30 segundos, una sola solicitud en vuelo y pausa ante HTTP429; no crea un bucle continuo de reintentos. La demo no ofrece disponibilidad garantizada; el endpoint propio debe poder sustituirse sin cambiar renderer/transporte.
+
+Calcular envía al servidor origen/destino y opciones, además de IP e identificador de cliente. No registrar JSON ni coordenadas en logs. La [política FOSSGIS de routing](https://routing.openstreetmap.de/about.html) describe registros y crédito OSM para su servicio OSRM; Valhalla remite a ese criterio de fair use, pero no se afirma que ambas implementaciones tengan idéntica retención. La página alemana completa de condiciones respondió protección Anubis durante investigación; no se eludió.
+
+## Petición y perfiles
+
+`buildValhallaRequest(origin, destination, options)` genera POST JSON con dos locations `type=break`, `costing=motorcycle`, `shape_format=polyline6`, `units=kilometers`, `language=es-ES` y `directions_type=instructions`. `motorcycle` está marcado beta por Valhalla. FASTEST significa una ruta basada en tiempo y costes del modelo; no certifica el mínimo matemático, legalidad vial ni idoneidad de cada tramo para la MT-07.
+
+Fase0.8 añade preferencias combinables en `RouteOptions(profile, avoidMotorways, avoidUnpaved, avoidTolls)`. Los presets se combinan con los flags explícitos; cambiar una preferencia no modifica el costing a auto:
+
+| Perfil/opción | Petición motorcycle | Semántica |
+|---|---|---|
+| FASTEST / Moto rápido | use_highways=0.5, use_tolls=0.5, use_trails=0.5 | Preferencia neutral; autopistas y peajes permitidos |
+| AVOID_MOTORWAYS / Evitar autopistas | use_highways=0 | Penaliza autopistas; no prohibición absoluta |
+| AVOID_UNPAVED / Preferir asfalto | use_trails=0 | Penaliza superficies deficientes y caminos; no certificación de asfalto |
+| TOURING | use_highways=0.2, use_tolls=0 | Reduce autopistas y peajes; no garantiza ruta panorámica |
+| avoidTolls | use_tolls=0 | Preferencia por evitar peajes, combinable con las anteriores |
+
+`use_tracks=0` conserva una penalización de pistas en todos los perfiles. La preferencia de asfalto tiene efecto: reduce `use_trails` de0.5 neutral a0.0; en fases previas era0.0 fijo. Ninguna selección habilita ignorar restricciones, acceso o sentidos únicos.
+
+La [documentación oficial motorcycle y exclusiones](https://valhalla.github.io/valhalla/api/route/api-reference/#motorcycle-costing-options-beta) describe costes blandos y exclusiones experimentales. Se comprobó también [MotorcycleCost](https://github.com/valhalla/valhalla/blob/master/src/sif/motorcyclecost.cc), [DynamicCost](https://github.com/valhalla/valhalla/blob/master/valhalla/sif/dynamiccost.h) y [AutoCost](https://github.com/valhalla/valhalla/blob/master/src/sif/autocost.cc) el2026-09-29: motorcycle lee opciones base, pero Allowed/AllowedReverse no aplican `exclude_unpaved`; AutoCost sí lo aplica. Por eso no enviamos esa bandera como una garantía de moto. `exclude_highways`/`exclude_tolls` dependen de `service_limits.allow_hard_exclusions`; el servidor puede ignorarlas con un warning. Se retiró `exclude_highways=true` del antiguo preset para evitar esa falsa expectativa. No hay fallback silencioso a auto ni a otro perfil.
+
+`RouteResult.hasUnpaved` es evidencia opcional, no una validación independiente: se deriva del campo booleano `maneuver.rough`, emitido por el [serializador oficial](https://github.com/valhalla/valhalla/blob/master/src/tyr/route_serializer_valhalla.cc) cuando `portions_unpaved` es verdadero. `true` permite avisar que el resultado incluye tierra pese a la preferencia. Si faltan campos, es `null`, nunca «asfalto verificado» por ausencia. Solo una respuesta con información explícita completa y todos false produce false; el backend habitual omite rough=false. No se inventa un campo summary.has_unpaved.
+
+Android conserva las opciones usadas junto a la ruta para que los recálculos mantengan el perfil. Cambiar los controles prepara solicitudes futuras y no transforma retroactivamente una ruta activa. Las pruebas de serialización cubren independencia/combinación de preferencias, costing motorcycle y ausencia de exclusiones no verificadas; las pruebas de metadatos distinguen ausencia, evidencia positiva y booleanos inválidos. No se ha realizado un smoke HTTP para cada combinación nueva ni una prueba física de las preferencias.
+
+## Resultado puro JVM
+
+`parseValhallaRoute(json, destination=null)` devuelve `RouteResult`. Preserva el destino solicitado separado del extremo ajustado a carretera, geometría, longitud total y duración. `Maneuver` conserva instruction, type, begin/endShapeIndex, duración, nombres de vía y longitud **de su segmento**. Esta longitud no es la distancia actual del motorista hasta el próximo giro.
+
+El parser acepta JSON estricto, status exitoso y unidades explícitas kilómetros/millas; convierte a metros y segundos enteros redondeados. Decodifica polyline6, valida rangos geográficos, mediciones finitas/no negativas y límites de índices. Une legs por su punto común y rebasa índices sobre la geometría final. Rechaza legs desconectadas, respuestas de más de 2Mi caracteres, geometrías de más de 100.000 puntos o más de 128 legs. El HTTP adapter debe limitar también los bytes recibidos antes de construir el String. Mensajes de error propios no incluyen cuerpo remoto ni coordenadas.
+
+JSON utiliza Gson 2.11.0 con `Strictness.STRICT`, API documentada en su [release oficial](https://github.com/google/gson/releases/tag/gson-parent-2.11.0). Adapter y decoder son código original del proyecto; no se incorpora código del motor Valhalla. Gson usa [Apache 2.0](https://github.com/google/gson/blob/gson-parent-2.11.0/LICENSE); Valhalla es [MIT](https://github.com/valhalla/valhalla/blob/master/COPYING). El mapa/ruta debe conservar crédito [© OpenStreetMap contributors](https://www.openstreetmap.org/copyright).
+
+## Verificación
+
+`ValhallaRouteTest` usa fixture original de estructura realista, no captura de GPS del usuario ni respuesta inventada presentada como ruta real. Cubre vector polyline6 independiente, kilómetros/millas, maniobras de llegada de longitud cero, unión de legs e índices, JSON no estricto, errores backend, overflow, coordenadas fuera de rango, formas truncadas y opciones de petición. Las pruebas no certifican disponibilidad pública, idoneidad de restricciones de moto, geocoder ni guía de giros.
+
+Smoke HTTP autorizado: una única petición POST de demostración en Asturias (43.36,-5.85 → 43.365,-5.845), sin coordenadas del usuario, con User-Agent identificativo y X-Client-Id, devolvió HTTP200/status0 el 2026-09-29. Se aceptó motorcycle, units kilometers y language es-ES; la respuesta contenía un leg y diez maniobras en español, incluida llegada de longitud cero. Esto verifica el contrato de esta consulta, no disponibilidad continua ni restricciones de carretera. La comprobación HTTP y el render nativo Android deben reportarse por separado del parser JVM. La vista previa de fase 5 y el guiado básico de fase 6 se verifican por separado; sus umbrales no están calibrados con una prueba física de carretera. La prueba física TFT se realizará cuando el usuario esté disponible.
+
+
+## Guiado básico y límites — fase 6
+
+`RouteGuidanceTracker(route).update(fix, nowMs, epochMs, fixAgeMs)` separa reloj monotónico, hora civil para ETA y edad real del fix. El caller debe pasar la edad desde el proveedor, nunca asumir que un tick nuevo implica un fix nuevo. Se acepta edad hasta 15s y precisión horizontal finita entre 0 y 25m. Un fix no utilizable produce GPS_LOST sin giro/countdown/ETA y rompe evidencia de desvío/llegada. El timestamp del fix identifica observaciones distintas; ticks repetidos no avanzan estado ni confirman umbrales. Un intervalo entre observaciones de más de 15s también rompe evidencia. Recuperar tras GPS_LOST o ese intervalo requiere dos fixes nuevos: el primero establece baseline sin avanzar y el segundo estable permite adquirir de nuevo; la ausencia no amplía la ventana de movimiento.
+
+La primera adquisición usa la proyección más cercana válida sobre toda la ruta. Después se limita el candidato a una ventana local dependiente de velocidad/tiempo, con tolerancia hacia atrás de 20m y progreso acumulado que no retrocede por jitter. Se verifica distancia a ese candidato antes de avanzar. Saltos de posición incompatibles con movimiento observado producen temporalmente GPS_LOST; un fix posterior estable recupera evaluación. Estos filtros no sustituyen map matching: cruces, ramales paralelos, puentes, conducción en sentido contrario y pérdidas prolongadas de GPS siguen siendo ambiguos. La política conservadora puede congelar progreso y ocultar guiado como GPS_LOST ante un salto grande hacia una sección posterior con proyección local ambigua; detener/iniciar o recalcular permite una adquisición nueva. No inferir una carretera distinta solo porque otra geometría está cerca.
+
+El próximo giro usa la distancia geométrica al `beginShapeIndex` y avanza después de pasarlo por más de 5m. Los tipos oficiales 1/2/3 son Start/StartRight/StartLeft, instrucciones de salida, y se omiten del próximo giro; los giros normales Right/Left son 10/15. `maneuverDirection(type)` elige icono sin analizar traducciones. Llegada exige extremo ajustado a carretera a ≤25m, restante geométrico ≤30m, tres fixes distintos y ≥2s; luego permanece confirmada hasta sustituir el tracker. Los [tipos oficiales de maniobra](https://valhalla.github.io/valhalla/api/route/api-reference/#trip-legs-and-maneuvers) sustentan esos IDs.
+
+Desvío: separación de toda la geometría mayor que `max(40m, 2 × accuracy)` durante ≥5s y ≥3 fixes distintos. Una recuperación rompe la secuencia. Mientras la posición excede el umbral se ocultan estimaciones de giro; OFF_ROUTE confirma el estado después de esa evidencia. OFF_ROUTE conserva la ruta para el mapa, pero no muestra countdown ni ETA calculados como si se siguiera sobre ella. Todos esos umbrales son configurables y están pendientes de calibración real.
+
+El restante es longitud geométrica pendiente. ETA real es **aproximada**: duración inicial Valhalla multiplicada por fracción geométrica pendiente; no contempla tráfico, paradas ni velocidad futura. `RouteDemo(route).stateAt(elapsedMs, epochMs)` interpola posiciones a 12m/s y produce guiado completo determinista hasta ARRIVED; su ETA usa esa velocidad. Android debe mostrar DEMO continuamente y jamás utilizarlo para lanzar recálculo HTTP.
+
+`ReroutePolicy` separa decisión de IO: `shouldRequest`, `markRequested` antes de lanzar y `markFinished` en finally, incluidos errores/cancelación. Un request activo bloquea otro; el cooldown tras finalización es al menos 30s, ampliable con Retry-After. `reset` solo para nueva sesión/acción manual. Android aplica además el límite de fallos y bloqueo HTTP429; una sustitución de ruta debe ser atómica y conservar la ruta anterior si falla.
+
+`RouteGuidanceTest` cubre proyección/countdown/ETA, jitter y giro pasado, adquisición intermedia, ticks duplicados y separación temporal, tres observaciones de desvío/llegada, margen de precisión, fixes inválidos/stale, saltos y retorno, cruce de geometría, antimeridiano, single-flight/cooldown/Retry-After e interpolación demo. Son pruebas geométricas; no certifican guiado físico ni calidad de datos OSM.

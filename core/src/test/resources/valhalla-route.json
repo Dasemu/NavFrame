@@ -1,0 +1,18 @@
+{
+  "trip": {
+    "status_message": "Found route between points",
+    "status": 0,
+    "units": "kilometers",
+    "language": "es-ES",
+    "summary": {"length": 0.052, "time": 17.4},
+    "legs": [{
+      "shape": "_onuqA~w`dJgEnKoKgE",
+      "summary": {"length": 0.052, "time": 17.4},
+      "maneuvers": [
+        {"type": 1, "instruction": "Dirígete hacia el norte.", "street_names": ["Calle de prueba"], "length": 0.031, "time": 10.4, "begin_shape_index": 0, "end_shape_index": 1},
+        {"type": 10, "instruction": "Gira a la derecha.", "length": 0.021, "time": 7, "begin_shape_index": 1, "end_shape_index": 2},
+        {"type": 4, "instruction": "Has llegado a tu destino.", "length": 0, "time": 0, "begin_shape_index": 2, "end_shape_index": 2}
+      ]
+    }]
+  }
+}

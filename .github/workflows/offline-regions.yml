@@ -1,0 +1,92 @@
+name: Build worldwide offline regions
+on:
+  push:
+    tags: ['offline-bootstrap-andorra']
+  workflow_dispatch:
+    inputs:
+      regions:
+        description: 'Geofabrik IDs, comma separated (e.g. andorra,act,cantabria); max 32'
+        required: true
+        default: andorra
+      publish:
+        description: Publish immutable regional releases and update catalog
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: matrix
+        env:
+          REGION_IDS: ${{ github.event_name == 'push' && 'andorra' || inputs.regions }}
+        run: |
+          value=$(python3 tools/offline/global-regions.py matrix "$REGION_IDS")
+          echo "value=$value" >> "$GITHUB_OUTPUT"
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install pinned builders
+        run: |
+          pip install -r tools/offline/poi-requirements.txt
+          curl --fail --location --retry 3 --output planetiler.jar https://github.com/onthegomap/planetiler/releases/download/v0.10.2/planetiler.jar
+      - name: Build bounded regional package
+        env:
+          REGION_ID: ${{ matrix.region }}
+          PACK_VERSION: ${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          python3 tools/offline/global-regions.py build --region "$REGION_ID" --version "$PACK_VERSION" --planetiler-jar planetiler.jar --output output
+      - uses: actions/upload-artifact@v4
+        if: ${{ github.event_name != 'push' && !inputs.publish }}
+        with:
+          name: offline-${{ strategy.job-index }}
+          path: |
+            output/*.navframe
+            output/regional-catalog.json
+          retention-days: 7
+      - name: Publish one immutable release per region
+        if: ${{ github.event_name == 'push' || inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REGION_ID: ${{ matrix.region }}
+          PACK_VERSION: ${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          region_slug="${REGION_ID//\//-}"
+          tag="offline-gf-$region_slug-$PACK_VERSION"
+          gh release create "$tag" output/*.navframe output/regional-catalog.json --draft --target "$GITHUB_SHA" --title "Offline $REGION_ID $PACK_VERSION" --notes "OpenStreetMap contributors / ODbL-1.0. Geofabrik extract; source timestamps and SHA-256 provenance included. Community camera data is incomplete."
+          gh release edit "$tag" --draft=false --latest=false
+  catalog:
+    needs: build
+    if: ${{ always() && (github.event_name == 'push' || inputs.publish) && !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: offline-catalog-publication
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild index from all published regional releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/offline/publish-catalog.py

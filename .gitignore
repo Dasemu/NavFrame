@@ -1,0 +1,16 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.iml
+.idea/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+*.jks
+*.keystore
+*.p12
+*.pfx
+dist/.es-cantabria-build/
+planetiler.jar

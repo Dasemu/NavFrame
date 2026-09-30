@@ -1,0 +1,86 @@
+# Original NavFrame schema: OSM data only, no OpenMapTiles design/code reused.
+schema_name: NavFrame Offline
+schema_description: Regional motorcycle map context from OpenStreetMap. Not routing data.
+version: 1.0.0
+attribution: '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>'
+args:
+  osm_local_path: build/offline/asturias.osm.pbf
+  minzoom: 6
+  maxzoom: 14
+  threads: 4
+sources:
+  osm:
+    type: osm
+    local_path: '${ args.osm_local_path }'
+layers:
+  - id: roads
+    features:
+      - source: osm
+        geometry: line
+        min_zoom: 6
+        include_when:
+          highway: [motorway, motorway_link, trunk, trunk_link, primary, primary_link, secondary, secondary_link, tertiary, tertiary_link]
+        attributes:
+          - { key: class, tag_value: highway }
+          - { key: name, tag_value: name }
+          - { key: ref, tag_value: ref }
+      - source: osm
+        geometry: line
+        min_zoom: 11
+        include_when:
+          highway: [unclassified, residential, living_street, service, track, road]
+        attributes:
+          - { key: class, tag_value: highway }
+          - { key: name, tag_value: name }
+      - source: osm
+        geometry: line
+        min_zoom: 13
+        include_when:
+          highway: [path, footway, cycleway, steps, pedestrian]
+        attributes:
+          - { key: class, tag_value: highway }
+          - { key: name, tag_value: name }
+  - id: water
+    features:
+      - source: osm
+        geometry: polygon
+        min_zoom: 6
+        include_when: { natural: water }
+  - id: waterway
+    features:
+      - source: osm
+        geometry: line
+        min_zoom: 8
+        include_when: { waterway: [river, stream, canal] }
+  - id: landuse
+    features:
+      - source: osm
+        geometry: polygon
+        min_zoom: 7
+        include_when:
+          __any__:
+            - { landuse: [forest, meadow, grass, farmland, orchard, vineyard] }
+            - { natural: [wood, scrub, heath, grassland] }
+            - { leisure: park }
+  - id: building
+    features:
+      - source: osm
+        geometry: polygon
+        min_zoom: 13
+        include_when: { building: __any__ }
+  - id: place
+    features:
+      - source: osm
+        geometry: point
+        min_zoom: 6
+        include_when: { place: [city, town] }
+        attributes:
+          - { key: class, tag_value: place }
+          - { key: name, tag_value: name }
+      - source: osm
+        geometry: point
+        min_zoom: 10
+        include_when: { place: [village, hamlet, suburb, neighbourhood, locality] }
+        attributes:
+          - { key: class, tag_value: place }
+          - { key: name, tag_value: name }

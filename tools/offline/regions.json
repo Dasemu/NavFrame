@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "regions": [
+    {
+      "id": "es-cantabria",
+      "name": "Cantabria",
+      "version": "20260928.1",
+      "source": "https://download.geofabrik.de/europe/spain/cantabria-latest.osm.pbf",
+      "coverage": "https://download.geofabrik.de/europe/spain/cantabria.poly",
+      "osmTimestamp": "2026-09-28T20:23:05Z",
+      "bounds": {
+        "south": 42.7,
+        "west": -4.9,
+        "north": 43.9,
+        "east": -3.1
+      },
+      "pbfSha256": "0036ed2762d2ef7833362f15b5e09904dacbea47d0a2381bbc1fab80a92d0731",
+      "mapSha256": "5fa6d6ec7ce4d1b7199581c2e27cf28aff17ff013e9ca09b9c5c4740a2cb4a90",
+      "poiSha256": "42471d1606138a60f189429511c7a9e4b4741adb87d420d891343600a0c45270",
+      "archive": "dist/es-cantabria-20260928.1.navframe",
+      "archiveBytes": 27782594,
+      "archiveSha256": "b4f8e8075301a645e33511642119997dc27b1fb8e52ae0caa14519ebd3b79ce9",
+      "license": "ODbL-1.0",
+      "recipe": "NavFrame regional pack 1.0.0 / Planetiler 0.10.2 / NavFrame POI 1.0.0",
+      "coverageSha256": "64cc9cb3ad43b301eae6d347150de6e529b1a7b9f0af54e7a5dbdcf82f213a5b"
+    }
+  ]
+}
