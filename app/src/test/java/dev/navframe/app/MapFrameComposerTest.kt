@@ -37,6 +37,21 @@ class MapFrameComposerTest {
         try { assertEquals(480, decoded.width); assertTrue(Color.red(decoded.getPixel(20, 50)) < 25) }
         finally { decoded.recycle() }
     }
+    @Test fun guidedLayoutReservesMoreOfTheTftForTheMap() = runBlocking {
+        val map = Bitmap.createBitmap(480, 240, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.rgb(44, 60, 76)) }
+        try {
+            val route = RouteResult(listOf(GeoPoint(43.36, -5.85), GeoPoint(43.365, -5.845)), emptyList(), 12000, 900)
+            val state = NavigationState(route = route, nextManeuver = Maneuver("Gira a la derecha", 400, 10, 0, 1, 20),
+                distanceToNextManeuverMeters = 400, navigationStatus = NavigationStatus.NAVIGATING)
+            val decoded = decode(MapFrameComposer().compose(map, PointF(240f, 145f), state, NavigationMode.MAP_GPS, ConfiguredMapDataSource.DEFAULT_ATTRIBUTION))
+            try {
+                assertEquals(480, decoded.width); assertEquals(240, decoded.height)
+                assertTrue("Map should begin immediately below the compact maneuver band", Color.red(decoded.getPixel(10, 56)) > 35)
+                assertTrue("Map should remain visible almost to the compact footer", Color.red(decoded.getPixel(10, 205)) > 35)
+                assertTrue("Footer should start below the enlarged map viewport", Color.red(decoded.getPixel(250, 225)) < 25)
+            } finally { decoded.recycle() }
+        } finally { map.recycle() }
+    }
     @Test fun longAttributionRemainsInsideFrameAndUsesMultipleLines() = runBlocking {
         val frame = MapFrameComposer().compose(null, null, NavigationState(), NavigationMode.MAP_GPS, "© Example map provider and its contributors · OpenFreeMap · © OpenMapTiles · © OpenStreetMap contributors")
         val decoded = decode(frame)

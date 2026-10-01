@@ -53,7 +53,7 @@ class MapLibreTftRenderer(context: Context, private val source: MapDataSource, p
         val position = LatLng(state.position.latitude, state.position.longitude)
         val camera = TftCameraPolicy().parameters(state)
         val cameraPosition = CameraPosition.Builder().target(position).zoom(camera.zoom)
-            .bearing(camera.bearingDegrees.toDouble()).padding(0.0, 70.0, 0.0, 0.0).build()
+            .bearing(camera.bearingDegrees.toDouble()).padding(0.0, 50.0, 0.0, 0.0).build()
         val current = snapshotter ?: run {
             val tile = source.tileSource()
             val builder = if (tile.uri.startsWith("asset://")) Style.Builder().fromJson(context.assets.open(tile.uri.removePrefix("asset://")).bufferedReader().use { it.readText() })
