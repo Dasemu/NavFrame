@@ -68,6 +68,7 @@ class TftService : Service() {
     private val mutableVoiceStatus = MutableStateFlow("Voz: preparando motor español")
     val voiceStatus = mutableVoiceStatus.asStateFlow()
     private var mapRenderer: MapLibreTftRenderer? = null
+    private var lastMapNetworkConnected: Boolean? = null
     private val mutableMapDiagnostic = MutableStateFlow("TFT MAP · sin captura")
     val mapDiagnostic = mutableMapDiagnostic.asStateFlow()
     private var lastMapFailureDiagnostic = "sin fallo registrado"
@@ -693,7 +694,8 @@ class TftService : Service() {
         val fix = lastGpsFix
         val accuracy = when { fix == null -> "SIN FIX"; !fix.accuracyMeters.isFinite() -> "DESCONOCIDA"; fix.accuracyMeters <= 5 -> "0–5 m"; fix.accuracyMeters <= 15 -> "6–15 m"; fix.accuracyMeters <= 25 -> "16–25 m"; else -> ">25 m" }
         val age = if (fix == null) "SIN FIX" else if (SystemClock.elapsedRealtime() - lastGpsElapsed <= 15_000) "RECIENTE" else "CADUCADO"
-        return "NavFrame 0.13.0 · Android ${Build.VERSION.SDK_INT} · ${Build.MANUFACTURER} ${Build.MODEL}\nMapLibre OpenGL 13.5.2 · TFT nativo 480×240\nOrigen del mapa: $origin\n${mutableMapDiagnostic.value}\nÚltimo fallo: $lastMapFailureDiagnostic\nGPS: $age · precisión $accuracy · ${mutableNavigationState.value.navigationStatus}\nTFT: ${mutableState.value} · modo ${mutableMode.value}\nSin coordenadas, consultas, direcciones ni URLs."
+        val network = when (mapRenderer?.networkConnected ?: lastMapNetworkConnected) { true -> "CONECTADA"; false -> "SIN CONEXIÓN"; null -> "SIN COMPROBAR" }
+        return "NavFrame 0.13.1 · Android ${Build.VERSION.SDK_INT} · ${Build.MANUFACTURER} ${Build.MODEL}\nMapLibre OpenGL 13.5.2 · TFT nativo 480×240\nOrigen del mapa: $origin\nRed TFT: $network\n${mutableMapDiagnostic.value}\nÚltimo fallo: $lastMapFailureDiagnostic\nGPS: $age · precisión $accuracy · ${mutableNavigationState.value.navigationStatus}\nTFT: ${mutableState.value} · modo ${mutableMode.value}\nSin coordenadas, consultas, direcciones ni URLs."
     }
     fun isRealSessionRequested(): Boolean = realRequested
     fun isGpsSessionActive(): Boolean = gpsRequested
@@ -783,6 +785,7 @@ class TftService : Service() {
         }
     }
     private suspend fun mapUnavailable(state: NavigationState, mode: NavigationMode, attribution: String, error: MapRenderException): TftFrame {
+        lastMapNetworkConnected = mapRenderer?.networkConnected ?: lastMapNetworkConnected
         mapRenderer?.close()
         mapRenderer = null
         mapFailures = (mapFailures + 1).coerceAtMost(4)

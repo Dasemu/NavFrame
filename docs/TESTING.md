@@ -147,6 +147,18 @@ La pantalla principal funciona sin GPS ni Bluetooth: mapa online, búsqueda, opc
 
 ## Entorno de desarrollo observado
 
+### Ride feedback and regression checks (0.13.1)
+
+The rider confirmed downloaded regional maps display on both the phone and the Yamaha TFT, and voice instructions work during a real ride. Online maps worked on the phone but failed on the TFT. Deviating from the route could incorrectly report GPS loss while the map still followed the rider, with instructions resuming only after returning to the previous route progress.
+
+Route regressions now distinguish a reliable position outside the reachable route section from an unusable GPS fix. Validate automatic recalculation from the current position after a sustained deviation, including a reversal on the same road. The destination and selected routing profile must remain unchanged, and a successful replacement route must resume instructions.
+
+The TFT snapshot renderer now owns its connectivity lifecycle independently of the phone map. This closes a confirmed lifecycle gap; the reported online-map failure still needs device validation. Test the default online map with no offline source selected, then background the phone, lock the screen, and change between Wi-Fi and mobile data. If rendering fails, use **Info → TFT map diagnostics** to collect the sanitized failure stage and reason.
+
+Horizontal GPS uncertainty remains visible as small marker movement. Guidance still rejects fixes older than 15 seconds or with accuracy worse than 25 metres; deviation handling must not hide genuine loss of usable positioning.
+
+Local verification for 0.13.1 passed 159 unit tests (60 app, 89 core, 10 NaviLite), Android APK assembly, and lint with zero errors. The online TFT lifecycle tests do not exercise the native GPU renderer or prove online rendering on the motorcycle.
+
 El shell inicial tenía OpenJDK 25 y `adb` 35.0.2; no definía `ANDROID_HOME`/`ANDROID_SDK_ROOT` ni encontraba `gradle` en PATH. Se encontró un SDK Android bajo `/home/dasemu/.bubblewrap/android_sdk` y JDK 17 bajo `/home/dasemu/.bubblewrap/jdk/jdk-17.0.11+9`; la ejecución de Gradle se realizó con este JDK y `local.properties` apuntando al SDK. No hay un teléfono conectado validado por ADB.
 
 ## Registro de verificación local

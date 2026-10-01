@@ -188,9 +188,36 @@ class RouteGuidanceTest {
         tracker.update(fix(), 0, 0)
         tracker.update(fix(lon = 0.005, time = 2), 1_000, 0)
         val stableButDistant = tracker.update(fix(lon = 0.005, time = 3), 2_000, 0)
-        assertEquals(NavigationStatus.GPS_LOST, stableButDistant.navigationStatus)
+        assertEquals(NavigationStatus.NAVIGATING, stableButDistant.navigationStatus)
         assertNull(stableButDistant.remainingDistanceMeters)
         assertNull(stableButDistant.nextManeuver)
+        tracker.update(fix(lon = 0.005, time = 4), 5_000, 0)
+        val offRoute = tracker.update(fix(lon = 0.005, time = 5), 7_000, 0)
+        assertEquals(NavigationStatus.OFF_ROUTE, offRoute.navigationStatus)
+        assertTrue(ReroutePolicy().shouldRequest(offRoute, 7_000))
+    }
+
+    @Test fun `turning back on the same road confirms deviation rather than GPS loss`() {
+        val longRoute = RouteResult(listOf(GeoPoint(0.0, 0.0), GeoPoint(0.0, 0.02)), emptyList(), 2224, 180)
+        val tracker = RouteGuidanceTracker(longRoute)
+        tracker.update(fix(lon = 0.01), 0, 0)
+        tracker.update(fix(lon = 0.0097, time = 2), 1_000, 0)
+        tracker.update(fix(lon = 0.0094, time = 3), 2_000, 0)
+        tracker.update(fix(lon = 0.0091, time = 4), 4_000, 0)
+        val reversed = tracker.update(fix(lon = 0.0088, time = 5), 7_000, 0)
+        assertEquals(NavigationStatus.OFF_ROUTE, reversed.navigationStatus)
+        assertTrue(ReroutePolicy().shouldRequest(reversed, 7_000))
+        assertNull(reversed.nextManeuver)
+        assertEquals(GeoPoint(0.0, 0.0088), reversed.position)
+    }
+
+    @Test fun `small movement past progress window uses boundary instead of false GPS loss`() {
+        val longRoute = RouteResult(listOf(GeoPoint(0.0, 0.0), GeoPoint(0.0, 0.02)), emptyList(), 2224, 180)
+        val tracker = RouteGuidanceTracker(longRoute)
+        val initial = tracker.update(fix(lon = 0.01), 0, 0)
+        val reversed = tracker.update(fix(lon = 0.00975, time = 2), 1_000, 0)
+        assertEquals(NavigationStatus.NAVIGATING, reversed.navigationStatus)
+        assertEquals(initial.remainingDistanceMeters, reversed.remainingDistanceMeters)
     }
 
     @Test fun `maneuver arrows use type rather than translated prose`() {

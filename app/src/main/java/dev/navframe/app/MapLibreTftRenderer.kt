@@ -9,6 +9,7 @@ import android.text.Html
 import dev.navframe.core.*
 import kotlinx.coroutines.*
 import org.maplibre.android.MapLibre
+import org.maplibre.android.net.ConnectivityReceiver
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.Style
@@ -32,6 +33,21 @@ class MapLibreTftRenderer(context: Context, private val source: MapDataSource, p
     private var closed = false
     private var stage = MapRenderStage.INITIALIZE
     private var capturedOnce = false
+    private var lastNetworkState: Boolean? = null
+    internal val networkConnected: Boolean? get() = lastNetworkState
+    private val connectivity = TftMapConnectivity(
+        acquire = { ConnectivityReceiver.instance(this.context).activate() },
+        refresh = {
+            val receiver = ConnectivityReceiver.instance(this.context)
+            receiver.setConnected(null)
+            val connected = receiver.isConnected
+            if (lastNetworkState != connected) {
+                lastNetworkState = connected
+                android.util.Log.d("NavFrame", "TFT_MAP_NETWORK connected=$connected")
+            }
+        },
+        release = { ConnectivityReceiver.instance(this.context).deactivate() },
+    )
     private fun phase(value: MapRenderStage) { stage = value; reportStage(value) }
     private data class Raster(val bitmap: Bitmap, val marker: PointF, val attribution: String)
     override suspend fun render(state: NavigationState) = render(state, NavigationMode.MAP_GPS)
@@ -50,6 +66,10 @@ class MapLibreTftRenderer(context: Context, private val source: MapDataSource, p
     private suspend fun capture(state: NavigationState): Raster = suspendCancellableCoroutine { continuation ->
         phase(MapRenderStage.INITIALIZE)
         MapLibre.getInstance(context)
+        // MapSnapshotter owns FileSource activation, but unlike MapView it does not own
+        // ConnectivityReceiver. Keep network notifications alive when the phone map stops
+        // (including screen off) and initialize from the current network, not a stale event.
+        connectivity.refresh()
         val position = LatLng(state.position.latitude, state.position.longitude)
         val camera = TftCameraPolicy().parameters(state)
         val cameraPosition = CameraPosition.Builder().target(position).zoom(camera.zoom)
@@ -117,8 +137,12 @@ class MapLibreTftRenderer(context: Context, private val source: MapDataSource, p
     /** Must be called on Main, just as the snapshotter was created there. */
     fun close() {
         check(Looper.myLooper() == Looper.getMainLooper())
+        if (closed) return
         closed = true
-        snapshotter?.cancel()
-        snapshotter = null
+        try { snapshotter?.cancel() }
+        finally {
+            snapshotter = null
+            connectivity.close()
+        }
     }
 }

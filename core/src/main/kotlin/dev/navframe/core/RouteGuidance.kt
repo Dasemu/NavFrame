@@ -76,7 +76,7 @@ class RouteGuidanceTracker(private val route: RouteResult, private val config: G
         }
         val projection = line.project(fix.position, progress, forwardAllowance)
         val outsideThreshold = max(config.offRouteMeters, fix.accuracyMeters * 2.0)
-        val offRoute = outside.observe(projection.distance > outsideThreshold, distinct, nowMs,
+        val offRoute = outside.observe(projection.localDistance > outsideThreshold, distinct, nowMs,
             config.offRouteFixes, config.offRouteDurationMs)
         // Freeze progress during inaccurate projection, so driving parallel to the road does not advance turns.
         if (projection.distance <= outsideThreshold && projection.localDistance <= outsideThreshold && projection.local != null) {
@@ -87,13 +87,9 @@ class RouteGuidanceTracker(private val route: RouteResult, private val config: G
             arrival.reset()
             return remember(base.copy(navigationStatus = NavigationStatus.OFF_ROUTE))
         }
-        if (projection.distance > outsideThreshold) {
+        if (projection.localDistance > outsideThreshold) {
             arrival.reset()
             return remember(base.copy(navigationStatus = NavigationStatus.NAVIGATING))
-        }
-        if (projection.local == null || projection.localDistance > outsideThreshold) {
-            arrival.reset()
-            return remember(base.copy(speed = 0f, navigationStatus = NavigationStatus.GPS_LOST))
         }
         val remaining = line.total - progress
         val close = projection.distance <= outsideThreshold && remaining <= config.arrivalRemainingMeters &&
@@ -205,8 +201,21 @@ private class RouteLine(private val route: RouteResult) {
             val distance = earthDistance(point, projected)
             val along = cumulative[i - 1] + (cumulative[i] - cumulative[i - 1]) * fraction
             nearestDistance = min(nearestDistance, distance)
-            if (along >= previous - 20 && along <= previous + forwardAllowance && distance < localDistance - 0.01) {
-                localDistance = distance; localProgress = along
+            // Compare against the reachable section, including its boundary points. A reliable
+            // position behind progress or on a distant later branch is a deviation, not GPS loss.
+            // Clamping the projection also avoids artificial gaps at the progress-window edges.
+            val start = max(cumulative[i - 1], previous - 20)
+            val end = min(cumulative[i], previous + forwardAllowance)
+            if (start <= end) {
+                val reachableAlong = along.coerceIn(start, end)
+                val length = cumulative[i] - cumulative[i - 1]
+                val reachableFraction = if (length == 0.0) 0.0 else (reachableAlong - cumulative[i - 1]) / length
+                val reachablePoint = GeoPoint(a.latitude + dy * reachableFraction,
+                    wrappedLongitude(a.longitude + wrappedLongitude(b.longitude - a.longitude) * reachableFraction))
+                val reachableDistance = earthDistance(point, reachablePoint)
+                if (reachableDistance < localDistance - 0.01) {
+                    localDistance = reachableDistance; localProgress = reachableAlong
+                }
             }
         }
         return Projection(nearestDistance, localProgress, localDistance)
