@@ -5,7 +5,7 @@
 - [Project overview, build, current status, and license summary](../README.md)
 - [Architecture and data flow](ARCHITECTURE.md)
 - [English summary of the original product brief](PRODUCT_BRIEF_EN.md)
-- [Original product brief (Spanish)](../yamaha_tft_native_navigator_codex.md)
+- [Original product brief (English)](../yamaha_tft_native_navigator_codex.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Security reporting](../SECURITY.md)
 
@@ -28,9 +28,10 @@
 - [Voice directions](VOICE.md)
 - [Fixed speed-camera advisories](RADARS.md)
 - [Testing and physical-device status](TESTING.md)
+- [2026-10-12 TFT map incident investigation](TFT_MAP_INCIDENT_2026-10-12.md)
 
 ## Licensing
 
 - [Licenses, attribution, and service terms](LICENSING.md)
 
-Most current public-facing guides are in English. `ROUTING.md` and `GEOCODING.md` begin with English summaries but retain detailed historical implementation notes in Spanish. `TESTING.md` retains detailed historical test procedures and per-version records in Spanish, with an English current-status summary at the top. The original product brief remains Spanish and is accompanied by [PRODUCT_BRIEF_EN.md](PRODUCT_BRIEF_EN.md).
+The guides and original product brief are in English. Quoted app labels and error messages retain the language displayed by the app. Historical procedures describe the version that introduced a feature; the current status in [Testing](TESTING.md) distinguishes later reports from those historical records.
