@@ -27,6 +27,10 @@ python3 -m unittest discover -s tools/offline -p 'test_*.py'
 
 Set up `local.properties` for your own Android SDK when needed. It is excluded from Git. See [Contributing](CONTRIBUTING.md) for the development and review process.
 
+## TFT diagnostic history
+
+Version 0.13.2 automatically saves the latest 100 TFT map failures and recoveries on the phone. After a reboot or empty battery, open **Information and licenses → TFT map diagnosis → Share** to export the saved history. It excludes coordinates, URLs, route/search text, and Bluetooth identifiers. See [Persistent TFT diagnostics](docs/TFT_DIAGNOSTICS.md) for retention and limitations.
+
 ## Documentation
 
 - [Documentation index](docs/README.md)

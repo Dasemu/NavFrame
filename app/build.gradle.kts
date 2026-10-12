@@ -2,12 +2,13 @@ plugins { id("com.android.application"); kotlin("android") }
 android {
     namespace = "dev.navframe.app"
     compileSdk = 36
+    buildFeatures { buildConfig = true }
     defaultConfig {
         applicationId = "dev.navframe.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "0.13.1"
+        versionCode = 18
+        versionName = "0.13.2"
     }
     testOptions { unitTests.isIncludeAndroidResources = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
