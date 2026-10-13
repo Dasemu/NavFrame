@@ -1,0 +1,56 @@
+name: PR branch and version policy
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+    branches: [main, development]
+permissions:
+  contents: read
+  issues: read
+jobs:
+  policy:
+    name: Branch and version policy
+    runs-on: ubuntu-latest
+    steps:
+      # Run only the trusted base policy. Never execute code from the PR head.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Test the trusted policy
+        run: python3 -m unittest discover -s scripts/tests -v
+      - name: Check explicit owner approval for a major bump
+        id: approval
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = 'major-version-approved';
+            const pr = context.payload.pull_request;
+            let approved = false;
+            if (pr.labels.some(item => item.name === label)) {
+              const events = await github.paginate(github.rest.issues.listEvents, {
+                ...context.repo, issue_number: pr.number, per_page: 100
+              });
+              const latest = events.filter(event =>
+                ['labeled', 'unlabeled'].includes(event.event) && event.label?.name === label
+              ).at(-1);
+              approved = latest?.event === 'labeled' &&
+                latest.actor?.login === context.repo.owner;
+            }
+            core.setOutput('approved', String(approved));
+      - name: Fetch PR snapshots and validate versions
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MAJOR_APPROVED: ${{ steps.approval.outputs.approved }}
+        run: |
+          set -euo pipefail
+          # Public read-only fetch; checkout credentials are not persisted.
+          git fetch --no-tags origin "$BASE_SHA" "refs/pull/$PR_NUMBER/head"
+          args=()
+          if [[ "$MAJOR_APPROVED" == true ]]; then args+=(--major-approved); fi
+          python3 scripts/check_version_policy.py \
+            --base-ref "$BASE_SHA" --head-ref "$HEAD_SHA" \
+            --base-branch "$BASE_BRANCH" --head-branch "$HEAD_BRANCH" "${args[@]}"

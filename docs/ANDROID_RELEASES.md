@@ -2,6 +2,25 @@
 
 The Android workflow verifies the debug build, unit tests and lint for pull requests and pushes to `main` or `development`. A manual Actions run is also available. Pull requests never receive production signing secrets or publish releases.
 
+## Pull request routing and version policy
+
+Commit the version change in the PR itself. `PR branch and version policy` checks the proposed `app/build.gradle.kts` against the destination branch snapshot:
+
+| PR source | Destination | Required versionName |
+| --- | --- | --- |
+| `feat/*` | `development` | `x.y.(z+1)` |
+| `fix/*` | `development` | `x.y.(z+1)` |
+| `hotfix/*` | `main` | `x.y.(z+1)` |
+| `development` | `main` | `x.(y+1).z` |
+
+Features and ordinary fixes must go through `development`; urgent production fixes use `hotfix/*` into `main`. Other source/destination combinations fail. Components not being incremented are preserved: promotion from `0.13.8` requires `0.14.8`, not `0.14.0`. Every PR also increases the committed Android `versionCode`; the production build override remains independent.
+
+The major component only changes on the owner's explicit request. For that exceptional PR, the repository owner must personally apply the `major-version-approved` label; the workflow verifies the most recent label event actor. The expected version then becomes `(x+1).y.z`, while branch routing still applies. Remove the label when the exception is no longer authorized.
+
+The policy uses `pull_request_target` with read-only permissions and executes only the base branch's trusted script. It reads PR version declarations with `git show` without building or executing PR code, and never uses production secrets. The existing Android checks continue using the ordinary `pull_request` event. Enable **Branch and version policy** as a required status check in branch protection/rulesets for both destinations to prevent merging a failed policy check. Install this policy on both branches before relying on it for development PRs. If another PR changes the destination version, update the branch/version and rerun the check before merging.
+
+CI validates the committed bump rather than pushing version commits with privileged tokens. This keeps the exact app version reviewable in the PR and works for fork contributions as well.
+
 ## Branch outputs
 
 | Event | Output after checks pass |
