@@ -32,6 +32,9 @@ class RouteGuidanceTracker(private val route: RouteResult, private val config: G
     private var lastTimestamp: Long? = null
     private val outside = SustainedFixes()
     private val arrival = SustainedFixes()
+    private val rejoin = SustainedFixes()
+    private var importedDeviation = false
+    private var rejoinProgress: Double? = null
     private var arrived = false
     private var needsRecovery = false
     private var lastState: NavigationState? = null
@@ -45,7 +48,7 @@ class RouteGuidanceTracker(private val route: RouteResult, private val config: G
             fix.accuracyMeters.isFinite() && fix.accuracyMeters in 0f..config.maxAccuracyMeters &&
             (lastNow == null || nowMs >= lastNow!!)
         if (!usable) {
-            outside.reset(); arrival.reset()
+            outside.reset(); arrival.reset(); rejoin.reset(); rejoinProgress = null
             needsRecovery = lastPoint != null
             return remember(base.copy(speed = 0f, navigationStatus = NavigationStatus.GPS_LOST))
         }
@@ -54,7 +57,7 @@ class RouteGuidanceTracker(private val route: RouteResult, private val config: G
         if (arrived) return remember(base.copy(speed = 0f, remainingDistanceMeters = 0,
             etaEpochMillis = if (route.imported) null else epochMs, navigationStatus = NavigationStatus.ARRIVED))
         if (needsRecovery || lastNow?.let { nowMs - it > config.maxFixAgeMs } == true) {
-            outside.reset(); arrival.reset()
+            outside.reset(); arrival.reset(); rejoin.reset(); rejoinProgress = null
             needsRecovery = false
             acquired = false
             lastPoint = fix.position
@@ -71,11 +74,30 @@ class RouteGuidanceTracker(private val route: RouteResult, private val config: G
         lastNow = nowMs
         lastTimestamp = fix.timestampMs
         if (jumped) {
-            outside.reset(); arrival.reset()
+            outside.reset(); arrival.reset(); rejoin.reset(); rejoinProgress = null
             return remember(base.copy(speed = 0f, navigationStatus = NavigationStatus.GPS_LOST))
         }
-        val projection = line.project(fix.position, progress, forwardAllowance)
+        var projection = line.project(fix.position, progress, forwardAllowance)
         val outsideThreshold = max(config.offRouteMeters, fix.accuracyMeters * 2.0)
+        if (route.imported && importedDeviation) {
+            // A detour may rejoin anywhere on the original trace, including behind progress.
+            // Require stable fresh fixes before widening the normal crossing-safe progress window.
+            val candidate = line.project(fix.position, 0.0, line.total)
+            val candidateProgress = candidate.local
+            val stable = candidateProgress != null && candidate.localDistance <= outsideThreshold &&
+                (rejoinProgress == null || abs(candidateProgress - rejoinProgress!!) <= movementAllowance)
+            val confirmed = rejoin.observe(stable, distinct, nowMs, 3, 2_000)
+            rejoinProgress = candidateProgress.takeIf { stable }
+            if (!confirmed) {
+                arrival.reset()
+                return remember(base.copy(navigationStatus = NavigationStatus.OFF_ROUTE))
+            }
+            progress = requireNotNull(candidateProgress)
+            acquired = true
+            importedDeviation = false
+            outside.reset(); rejoin.reset(); rejoinProgress = null
+            projection = candidate
+        }
         val offRoute = outside.observe(projection.localDistance > outsideThreshold, distinct, nowMs,
             config.offRouteFixes, config.offRouteDurationMs)
         // Freeze progress during inaccurate projection, so driving parallel to the road does not advance turns.
@@ -84,6 +106,7 @@ class RouteGuidanceTracker(private val route: RouteResult, private val config: G
             acquired = true
         }
         if (offRoute) {
+            if (route.imported) importedDeviation = true
             arrival.reset()
             return remember(base.copy(navigationStatus = NavigationStatus.OFF_ROUTE))
         }
