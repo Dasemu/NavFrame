@@ -44,6 +44,8 @@ data class RouteResult(
     val hasUnpaved: Boolean? = null,
     /** Locale of the server-provided maneuver text; retained until this route is replaced. */
     val guidanceLanguage: String = "es-ES",
+    /** Imported geometry has no verified road maneuvers or travel-time estimate. */
+    val imported: Boolean = false,
 )
 enum class RouteProfile { FASTEST, AVOID_MOTORWAYS, TOURING, AVOID_UNPAVED }
 /** Preferences, not guarantees or legal/surface certification. Presets combine with explicit flags. */

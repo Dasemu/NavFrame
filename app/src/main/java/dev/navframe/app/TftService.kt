@@ -52,7 +52,7 @@ class TftService : Service() {
     private var latestNavigationState = NavigationState()
         set(value) {
             field = value; mutableNavigationState.value = value
-            if (shownRoute?.demo == false && !routePreview) voice?.update(value)
+            if (shownRoute?.demo == false && !routePreview && value.route?.imported != true) voice?.update(value)
             else voice?.reset()
         }
     private var voice: NavigationVoiceController? = null
@@ -576,6 +576,17 @@ class TftService : Service() {
             if (generation == preparedGeneration && routePreview) publishFrame(frame)
         }
     }
+    /** Import never contacts a routing server or replaces active guidance before Start. */
+    fun prepareImportedRoute(imported: ImportedRoute) {
+        require(imported.route.imported && imported.route.maneuvers.isEmpty())
+        RouteGuidanceTracker(imported.route) // Validate before invalidating an existing plan.
+        invalidateRoutePlan()
+        routePlan = RoutePlan(imported.route, imported.route.geometry.first(), false)
+        preparedDestinationDirty = false
+        mutableRouteInfo.value = "GPX · %.1f km · %d puntos\nSigue el trazado: sin instrucciones de giro, ETA ni recálculo automático. Revisa el recorrido antes de iniciar.".format(java.util.Locale.ROOT, imported.route.distanceMeters / 1000.0, imported.route.geometry.size)
+        if (!hasActiveGuidance()) showPreparedPreview()
+    }
+    fun preparedRouteIsImported() = hasPreparedRoute() && routePlan?.route?.imported == true
     fun hasPreparedRoute() = !preparedDestinationDirty && routePlan != null
     fun routeUsesGps() = !preparedDestinationDirty && routePlan?.demo == false
     fun startRoute(preview: Boolean = false) {
@@ -596,6 +607,10 @@ class TftService : Service() {
         rerouteFailures = 0
         reroutePaused = false
         if (plan.demo) startDemo(true, preserveRoute = true) else startGps(true, preserveRoute = true)
+        if (plan.route.imported) {
+            mutableRouteInfo.value = "GPX iniciado · GPS real · %.1f km\nSigue el trazado · sin giros anunciados, ETA ni recálculo automático.".format(java.util.Locale.ROOT, plan.route.distanceMeters / 1000.0)
+            return
+        }
         mutableRouteInfo.value = "${if (preview) "Vista previa" else "Guiado iniciado"} · ${if (plan.demo) "posición DEMO simulada" else "GPS real"} · %.1f km · %d min planificados\nGuiado por geometría · ETA estimada. ${if (plan.demo) "Recorrido DEMO ficticio, sin GPS real ni recálculo automático." else "Recálculo por desvío sostenido; no sustituye señales viales."}".format(java.util.Locale.ROOT, plan.route.distanceMeters / 1000.0, (plan.route.durationSeconds + 59) / 60)
     }
     fun stopRoute() {
@@ -634,6 +649,10 @@ class TftService : Service() {
 
     fun requestReroute(manual: Boolean = true) {
         val plan = shownRoute ?: return
+        if (plan.route.imported) {
+            if (manual) mutableRouteInfo.value = "Ruta GPX · vuelve al trazado; no se modifica ni recalcula la ruta importada."
+            return
+        }
         if (plan.demo || routePreview || rerouteJob?.isActive == true) return
         val now = SystemClock.elapsedRealtime()
         val fix = lastGpsFix

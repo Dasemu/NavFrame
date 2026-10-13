@@ -22,6 +22,8 @@ open class MainActivity : Activity() {
     private var observers: Job? = null
     private var searchJob: Job? = null
     private var positionWait: Job? = null
+    private var importJob: Job? = null
+    private var pendingImportUri: Uri? = null
     private var searchGeneration = 0L
     private var updatingDestination = false
     private val placeRepository by lazy { OfflinePlaceRepository(applicationContext) }
@@ -69,7 +71,7 @@ open class MainActivity : Activity() {
     private val visibleProfiles = listOf(RouteProfile.FASTEST, RouteProfile.AVOID_MOTORWAYS, RouteProfile.AVOID_UNPAVED)
     private var destination: GeoPoint? = null
     private var destinationName = ""
-    private enum class Action { POSITION, CALCULATE, ROUTE, PREVIEW, CONNECT, CHANGE_CONNECT }
+    private enum class Action { POSITION, CALCULATE, ROUTE, PREVIEW, CONNECT, CHANGE_CONNECT, IMPORT_ROUTE }
     private var pendingAction: Action? = null
     private val permissionsPreferences by lazy { getSharedPreferences("permissions", MODE_PRIVATE) }
     private val connection = object : ServiceConnection {
@@ -78,6 +80,7 @@ open class MainActivity : Activity() {
             observeService()
             refreshPermissions()
             tryAutoConnect()
+            pendingImportUri?.let { pendingImportUri = null; importRoute(it) }
         }
         override fun onServiceDisconnected(name: ComponentName?) { service = null; connectionInfo.text = "●  Yamaha · conectar" }
     }
@@ -102,7 +105,7 @@ open class MainActivity : Activity() {
             setOnClickListener { withPermissions(Action.CONNECT) }; contentDescription = "Estado Yamaha. Tocar para conectar"
         }
         toolbar.addView(connectionInfo, LinearLayout.LayoutParams(0, dp(48), 1f))
-        toolbar.addView(button("☰") { AlertDialog.Builder(this).setTitle("NavFrame").setItems(arrayOf("Ajustes", "Mapas offline", "Lugares cercanos", "Información y licencias")) { _, item -> when(item) { 0 -> showSettings(); 1 -> showOfflineMaps(); 2 -> showPlaces(); 3 -> showInfo() } }.show() }.apply { contentDescription = "Abrir menú" }, LinearLayout.LayoutParams(dp(56), dp(48)))
+        toolbar.addView(button("☰") { AlertDialog.Builder(this).setTitle("NavFrame").setItems(arrayOf("Ajustes", "Mapas offline", "Lugares cercanos", "Cargar ruta GPX", "Información y licencias")) { _, item -> when(item) { 0 -> showSettings(); 1 -> showOfflineMaps(); 2 -> showPlaces(); 3 -> chooseRouteFile(); 4 -> showInfo() } }.show() }.apply { contentDescription = "Abrir menú" }, LinearLayout.LayoutParams(dp(56), dp(48)))
         top.addView(toolbar, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         val searchRow = row().apply { background = rounded(0xF217212D.toInt(), 18); elevation = dp(6).toFloat(); setPadding(dp(8), 0, dp(4), 0) }
         searchQuery = edit("Buscar calles y lugares").apply {
@@ -136,7 +139,7 @@ open class MainActivity : Activity() {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) { }
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 if (updatingDestination) return
-                cancelSearch(); positionWait?.cancel(); destination = null; destinationName = ""; routeDialog?.dismiss(); startButton?.isEnabled = false
+                cancelSearch(); importJob?.cancel(); positionWait?.cancel(); destination = null; destinationName = ""; routeDialog?.dismiss(); startButton?.isEnabled = false
                 if (service?.hasActiveGuidance() != true) service?.selectSearchDestination()
                 results.removeAllViews(); resultScroll.visibility = View.GONE; hint.text = ""
                 searchOfflineSuggestions(s?.toString().orEmpty())
@@ -210,7 +213,7 @@ open class MainActivity : Activity() {
                     NavigationStatus.ARRIVED -> "Has llegado al destino"
                     NavigationStatus.ROUTE_PREVIEW -> "Vista previa de ruta"
                     NavigationStatus.IDLE -> "Listo para navegar"
-                    else -> state.nextManeuver?.instruction ?: if (state.route == null) "GPS listo · elige un destino" else "Continúa por la ruta"
+                    else -> state.nextManeuver?.instruction ?: if (state.route == null) "GPS listo · elige un destino" else if (state.route?.imported == true) "Sigue el trazado GPX · sin giros anunciados" else "Continúa por la ruta"
                 }.let { if (demo) "DEMO · $it" else it }
                 val next = state.distanceToNextManeuverMeters?.let { "$it m" } ?: ""
                 val remaining = state.remainingDistanceMeters?.let { "%.1f km restantes".format(java.util.Locale.ROOT, it / 1000.0) } ?: ""
@@ -223,7 +226,7 @@ open class MainActivity : Activity() {
     }
     private fun withPermissions(action: Action) {
         if (service == null) { hint.text = "Espera la conexión con el servicio"; return }
-        val needsLocation = action == Action.POSITION || (action == Action.CALCULATE && origin.selectedItemPosition == 0) || (action == Action.ROUTE && service?.routeUsesGps() == true)
+        val needsLocation = action == Action.IMPORT_ROUTE || action == Action.POSITION || (action == Action.CALCULATE && origin.selectedItemPosition == 0) || (action == Action.ROUTE && service?.routeUsesGps() == true)
         val required = mutableListOf<String>()
         if ((action == Action.CONNECT || action == Action.CHANGE_CONNECT) && Build.VERSION.SDK_INT >= 31) required += Manifest.permission.BLUETOOTH_CONNECT
         if (needsLocation) required += Manifest.permission.ACCESS_FINE_LOCATION
@@ -232,7 +235,7 @@ open class MainActivity : Activity() {
         if (blocked) { AlertDialog.Builder(this).setTitle("Permiso necesario").setMessage("Activa ubicación precisa o dispositivos cercanos para esta función. Puedes seguir explorando mapas y usando la demo.").setPositiveButton("Abrir ajustes") { _, _ -> openAppSettings() }.setNegativeButton("Cancelar", null).show(); return }
         val request = missing.toMutableList()
         if (missing.contains(Manifest.permission.ACCESS_FINE_LOCATION)) request += Manifest.permission.ACCESS_COARSE_LOCATION
-        if ((action == Action.CONNECT || action == Action.CHANGE_CONNECT || (action == Action.ROUTE && service?.routeUsesGps() == true)) && Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED && !permissionsPreferences.getBoolean(Manifest.permission.POST_NOTIFICATIONS, false)) request += Manifest.permission.POST_NOTIFICATIONS
+        if ((action == Action.CONNECT || action == Action.CHANGE_CONNECT || ((action == Action.ROUTE || action == Action.IMPORT_ROUTE) && service?.routeUsesGps() == true)) && Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED && !permissionsPreferences.getBoolean(Manifest.permission.POST_NOTIFICATIONS, false)) request += Manifest.permission.POST_NOTIFICATIONS
         if (request.isEmpty()) { perform(action); return }
         val ask = {
             pendingAction = action
@@ -246,7 +249,7 @@ open class MainActivity : Activity() {
         if (requestCode != 42) return
         val action = pendingAction; pendingAction = null
         refreshPermissions()
-        val needsFine = action == Action.POSITION || (action == Action.CALCULATE && origin.selectedItemPosition == 0) || (action == Action.ROUTE && service?.routeUsesGps() == true)
+        val needsFine = action == Action.IMPORT_ROUTE || action == Action.POSITION || (action == Action.CALCULATE && origin.selectedItemPosition == 0) || (action == Action.ROUTE && service?.routeUsesGps() == true)
         val allowed = (!needsFine || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) && ((action != Action.CONNECT && action != Action.CHANGE_CONNECT) || Build.VERSION.SDK_INT < 31 || checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED)
         if (action != null && allowed) perform(action) else hint.text = "Permiso denegado · puedes usar la demo. Toca el aviso de permisos para abrir ajustes."
     }
@@ -275,6 +278,7 @@ open class MainActivity : Activity() {
             Action.CONNECT -> if (!connectRemembered(false)) chooseMotorcycle()
             Action.CHANGE_CONNECT -> chooseMotorcycle()
             Action.CALCULATE -> calculateRoute()
+            Action.IMPORT_ROUTE -> startImportedRoute()
             Action.ROUTE, Action.PREVIEW -> {
                 if (action == Action.ROUTE && service?.hasPreparedRoute() != true) return
                 if (action == Action.ROUTE) startRequested = true
@@ -328,8 +332,78 @@ open class MainActivity : Activity() {
             } catch (cancelled: CancellationException) { currentCoroutineContext().ensureActive(); hint.text = "Sin GPS · activa ubicación y prueba de nuevo"; routeInfo.text = hint.text; routeLoading?.visibility = View.GONE; retryRouteButton?.visibility = View.VISIBLE }
         }
     }
+    private fun chooseRouteFile() {
+        importJob?.cancel(); positionWait?.cancel()
+        try {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                // GPX providers use several MIME types, including application/octet-stream.
+                type = "*/*"
+            }, 76)
+        } catch (_: ActivityNotFoundException) { hint.text = "No hay selector de archivos disponible" }
+    }
+    private fun importRoute(uri: Uri) {
+        importJob?.cancel()
+        positionWait?.cancel()
+        hint.text = "Leyendo ruta GPX…"
+        importJob = scope.launch {
+            try {
+                val imported = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri)?.use(GpxRouteImporter::parse)
+                        ?: throw java.io.IOException("No se puede abrir el archivo")
+                }
+                ensureActive()
+                val current = service ?: run { hint.text = "Servicio no disponible · vuelve a cargar el GPX"; return@launch }
+                cancelSearch(); routeDialog?.dismiss()
+                current.prepareImportedRoute(imported)
+                destination = null; destinationName = ""
+                hint.text = "Ruta GPX cargada"
+                showImportedRouteSheet(imported.name)
+                withPermissions(Action.IMPORT_ROUTE)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                // Parser messages contain no coordinates, file paths or document contents.
+                hint.text = if (error is IllegalArgumentException) error.message ?: "GPX no válido" else "No se pudo leer el GPX · revisa el archivo y su acceso"
+            }
+        }
+    }
+    private fun showImportedRouteSheet(name: String?) {
+        routeDialog?.dismiss()
+        (routeInfo.parent as? android.view.ViewGroup)?.removeView(routeInfo)
+        val box = column().apply { setPadding(dp(20), dp(16), dp(20), dp(16)) }
+        box.addView(label(name ?: "Ruta GPX", 20f))
+        box.addView(routeInfo)
+        routeLoading = ProgressBar(this).apply { visibility = View.GONE }
+        box.addView(routeLoading)
+        retryRouteButton = null
+        startButton = button("Iniciar navegación") { withPermissions(Action.IMPORT_ROUTE) }
+        box.addView(startButton)
+        val dialog = AlertDialog.Builder(this).setView(box).setNegativeButton("Cerrar", null).create()
+        dialog.setOnDismissListener { positionWait?.cancel(); startRequested = false }
+        routeDialog = dialog
+        dialog.show()
+    }
+    private fun startImportedRoute() {
+        val current = service ?: return
+        if (!current.preparedRouteIsImported()) { hint.text = "Vuelve a cargar la ruta GPX"; return }
+        positionWait?.cancel()
+        if (current.hasFreshGpsFix()) { perform(Action.ROUTE); return }
+        current.setPhoneVisible(true)
+        hint.text = "Esperando GPS preciso para iniciar el GPX…"
+        routeLoading?.visibility = View.VISIBLE
+        startButton?.isEnabled = false
+        positionWait = scope.launch {
+            try {
+                withTimeout(60_000) { current.gpsReady.first { it && current.hasFreshGpsFix() } }
+                ensureActive()
+                if (current.preparedRouteIsImported()) perform(Action.ROUTE)
+            } catch (_: TimeoutCancellationException) { hint.text = "Sin GPS preciso · activa ubicación y pulsa Iniciar navegación de nuevo" }
+            finally { routeLoading?.visibility = View.GONE; startButton?.isEnabled = current.hasPreparedRoute() }
+        }
+    }
     private fun cancelSearch() { searchGeneration++; searchJob?.cancel(); searchJob = null }
     private fun searchDestination() {
+        positionWait?.cancel()
         cancelSearch(); results.removeAllViews(); resultScroll.visibility = View.GONE
         val query = searchQuery.text.toString(); val generation = searchGeneration
         val endpoint = getSharedPreferences("geocoder", MODE_PRIVATE).getString("endpoint", NominatimGeocoder.DEFAULT_ENDPOINT) ?: NominatimGeocoder.DEFAULT_ENDPOINT
@@ -395,7 +469,7 @@ open class MainActivity : Activity() {
     }
     private fun chooseDestination(point: GeoPoint, name: String, attribution: String) {
         val current = service ?: run { hint.text = "Espera la conexión con el servicio"; return }
-        cancelSearch(); positionWait?.cancel()
+        cancelSearch(); importJob?.cancel(); positionWait?.cancel()
         updatingDestination = true
         try { searchQuery.setText(name.take(200)) } finally { updatingDestination = false }
         startRequested = false
@@ -784,8 +858,12 @@ open class MainActivity : Activity() {
     }
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode !in listOf(73, 74) || resultCode != RESULT_OK) return
+        if (requestCode !in listOf(73, 74, 76) || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
+        if (requestCode == 76) {
+            if (service == null) pendingImportUri = uri else importRoute(uri)
+            return
+        }
         showOfflineMaps()
         if (requestCode == 74) {
             if (offlineTask?.isActive == true) { hint.text = "Ya hay una importación en curso"; return }
