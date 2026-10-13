@@ -24,7 +24,7 @@ Maps and installed places can be viewed without a network connection. Search for
 
 Map detail is bounded by package coverage and maximum zoom. POI data can be absent or outdated. Glyph coverage is limited to the bundled font ranges, so some writing systems or characters may not render. OSM data does not certify business status, road access, motorcycle suitability, speed limits, or camera completeness.
 
-The owner confirmed that the bundled Asturias map works offline on a Xiaomi 11 Lite 5G NE running Android 14. This confirms phone use only. The last reported physical map-render attempt on the Yamaha TFT displayed `MAPA NO DISPONIBLE`; a successful TFT map render has not been confirmed.
+The owner confirmed that the bundled Asturias map works offline on a Xiaomi 11 Lite 5G NE running Android 14. On 2026-10-12, the owner reported about 20 minutes of working TFT map display followed by persistent `Mapa no disponible` while the phone map continued working, with an offline map installed. This confirms some successful TFT rendering, but not sustained reliability or the exact source selected by the TFT at failure. See [Testing](TESTING.md).
 
 ## Package format and validation
 

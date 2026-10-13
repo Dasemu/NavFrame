@@ -10,6 +10,10 @@ Contributions are welcome. NavFrame is experimental software for motorcycle navi
 - Preserve OSM attribution and source dates/hashes for derived data. Check third-party licenses before adding code, fonts, images, or data.
 - Keep endpoints configurable where appropriate. Never commit API keys, signing keys, personal coordinates, Bluetooth identifiers, or local machine configuration.
 
+## Licensing contributions
+
+The project currently has no global license grant for original code and documentation. Discuss contribution and redistribution terms with the maintainers before submitting substantial work. Identify any third-party origin and license explicitly. Changes to the Pillion-derived `navilite` module must preserve its PolyForm Noncommercial provenance and required notices; do not assume a license for original project material overrides third-party terms.
+
 ## Build and checks
 
 Use JDK 17 and an Android SDK with API 36. The Gradle wrapper pins the Gradle version.

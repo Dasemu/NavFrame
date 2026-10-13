@@ -4,11 +4,11 @@ NavFrame is an experimental Android navigation app that renders its own 480×240
 
 ## Current status
 
-The owner has confirmed static and synthetic NavFrame frames on a Xiaomi 11 Lite 5G NE running Android 14 and a 2026 Yamaha MT-07. The owner has also confirmed that the bundled Asturias map works offline on the phone. These results do not validate the current MapLibre map renderer on the motorcycle TFT: the last reported TFT map attempt showed `MAPA NO DISPONIBLE`, and no later physical map-render result is recorded.
+The owner has confirmed static and synthetic NavFrame frames on a Xiaomi 11 Lite 5G NE running Android 14 and a 2026 Yamaha MT-07, and the bundled Asturias map working offline on the phone. On 2026-10-12, the owner reported that the latest version displayed the map on the TFT for about 20 minutes, then showed `Mapa no disponible` in La Corredoria (Oviedo) for the rest of the trip while the phone map continued working. An offline map was installed. The exact installed build, diagnostic code and background state were not recorded; the cause is under investigation. This establishes a successful map display followed by a persistent failure, not sustained TFT reliability.
 
-Version 0.13.0 adds voice/routing language selection for Spanish, English, German, French, and Italian, plus a system-language option; unsupported system locales resolve to English. Speech still depends on the Android TextToSpeech engine and its installed voice data. The app includes offline map and place data for Asturias, plus installable regional packages. Worldwide regions can be discovered and built on demand through the [regional package workflow](docs/GLOBAL_OFFLINE.md); this is not complete worldwide coverage. Installed packages currently provide map and local place/camera data. Offline route calculation, global camera completeness, and complete worldwide font coverage are not provided.
+The current checkout is version 0.13.1. The 0.13 series adds voice/routing language selection for Spanish, English, German, French, and Italian, plus a system-language option; unsupported system locales resolve to English. Speech still depends on the Android TextToSpeech engine and its installed voice data. The app includes offline map and place data for Asturias, plus installable regional packages. Worldwide regions can be discovered and built on demand through the [regional package workflow](docs/GLOBAL_OFFLINE.md); this is not complete worldwide coverage. Installed packages currently provide map and local place/camera data. Offline route calculation, global camera completeness, and complete worldwide font coverage are not provided.
 
-Route calculation and address search use configurable online services. Spoken output uses the selected language when Android provides voice data; voice availability and offline behavior depend on the device's TextToSpeech engine. Physical validation of route guidance, voice playback, camera alerts, TFT map rendering, and a 30-minute screen-off session remains pending unless a newer test report says otherwise.
+Route calculation and address search use configurable online services. Spoken output uses the selected language when Android provides voice data; voice availability and offline behavior depend on the device's TextToSpeech engine. Physical validation of route guidance, voice playback, camera alerts, sustained TFT map rendering, and a 30-minute screen-off session remains pending unless a newer test report says otherwise.
 
 ## Build
 
@@ -35,6 +35,10 @@ Version 0.13.3 uses available native Android location sources and recent cached 
 
 Version 0.13.2 automatically saves the latest 100 TFT map failures and recoveries on the phone. After a reboot or empty battery, open **Information and licenses → TFT map diagnosis → Share** to export the saved history. It excludes coordinates, URLs, route/search text, and Bluetooth identifiers. See [Persistent TFT diagnostics](docs/TFT_DIAGNOSTICS.md) for retention and limitations.
 
+## Automated builds
+
+GitHub Actions uploads a debug APK artifact for pushes to `development`. Pushes to `main` publish a signed production APK release after build, tests, lint and signature checks pass. Production signing requires the repository secrets described in [Android builds and releases](docs/ANDROID_RELEASES.md). Pull requests run checks without publishing releases.
+
 ## Documentation
 
 - [Documentation index](docs/README.md)
@@ -50,4 +54,6 @@ Version 0.13.2 automatically saves the latest 100 TFT map failures and recoverie
 
 ## License notes
 
-There is no single permissive license covering every part of this repository. In particular, NaviLite contains code adapted from Pillion under PolyForm Noncommercial 1.0.0, which restricts commercial use. Other code, datasets, fonts, and dependencies have their own terms and notices. Review [Licensing](docs/LICENSING.md) and the included notices before copying, redistributing, or using any part of this project. OpenStreetMap-derived offline data is distributed under ODbL 1.0 with attribution.
+No project-wide license is granted for original NavFrame code or documentation. Public repository visibility alone does not grant permission to copy, modify or redistribute that material. The Pillion-derived `navilite` module retains **PolyForm Noncommercial 1.0.0** and its required notices; its commercial-use restrictions must be respected.
+
+Map data, fonts, dependencies and other third-party material retain their respective terms. OpenStreetMap-derived offline data is distributed under ODbL 1.0 with attribution. Review [Licensing](docs/LICENSING.md) and the included notices before copying, redistributing or using project material. Before redistributing a release, verify the terms for original material and every included component.

@@ -6,13 +6,17 @@ This document summarizes the project's current third-party materials and service
 
 | Component | Terms or status | Practical note |
 | --- | --- | --- |
-| NavFrame application | No single permissive license is declared for the whole repository | Check the individual code and data notices. Do not assume every file is available under the same terms. |
+| Original NavFrame code and documentation | No project-wide license is granted | Public visibility does not itself grant reuse or redistribution rights. Third-party material retains its own terms. |
 | NaviLite / Pillion-derived code | PolyForm Noncommercial 1.0.0; see `third_party/pillion/LICENSE.md` and `NOTICE.md` | The license restricts commercial use. Preserve the required notice and license. Separate permission is needed for uses outside its terms. |
 | MapLibre Native Android | BSD 2-Clause | Preserve required copyright, license, and disclaimer notices for distributed binaries and source. |
 | Gson | Apache License 2.0 | The app bundles Gson; its license and notice are in `app/src/main/assets/GSON_LICENSE.md`. |
 | Planetiler 0.10.2 | Apache License 2.0 | Build-time tool; it is not an Android runtime dependency. |
 | PMTiles format | Specification is CC0 | This does not change the license of the map data stored in a PMTiles file. |
 | Noto Sans glyph assets | SIL Open Font License 1.1 | Bundled glyph files and the full font notice are included in the APK assets. |
+
+## Public source and application releases
+
+The app links `navilite`, which contains Pillion-derived PolyForm Noncommercial code. Its license restricts commercial use. Preserve its required notice and license when distributing derived material, and obtain separate permission from the rightsholders for uses outside those terms. Original NavFrame code and documentation currently have no project-wide license grant; a public source repository does not itself provide reuse rights. A redistribution must respect the rights in original material as well as all included component, data and font licenses.
 
 ## OpenStreetMap-derived data
 

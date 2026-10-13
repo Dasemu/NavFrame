@@ -1,6 +1,6 @@
 # Yamaha TFT Native Navigator: English brief summary
 
-This is an English summary of the original project brief, [`yamaha_tft_native_navigator_codex.md`](../yamaha_tft_native_navigator_codex.md). That source document is preserved in its original Spanish-language form for provenance; this summary is not a line-by-line translation and may not include every original requirement.
+This is an English summary of the original project brief, [`yamaha_tft_native_navigator_codex.md`](../yamaha_tft_native_navigator_codex.md). The source document is in English; this summary is not a line-by-line translation and may not include every original requirement.
 
 ## Product goal
 
@@ -12,7 +12,7 @@ The intended data flow is Android GPS plus map data and route results into share
 
 The original brief describes GPS position, destination search, route calculation, map/position/route display, next maneuver, remaining distance and estimated arrival, turn-based rerouting, direct TFT rendering, and screen-off operation. It proposes an Android Kotlin app, MapLibre for maps, a routing backend, configurable geocoding, local regional maps in a later phase, and a phone UI for setup/control.
 
-The implementation is experimental and incomplete. Current verified status is documented in the main [README](../README.md), [Architecture](ARCHITECTURE.md), and [Testing/physical validation record](TESTING.md). In particular, physical confirmation of basic images on one Yamaha/phone combination does not establish a working map renderer, safe route guidance, or long-duration screen-off operation.
+The implementation is experimental and incomplete. Current verified status is documented in the main [README](../README.md), [Architecture](ARCHITECTURE.md), and [Testing/physical validation record](TESTING.md). In particular, physical confirmation of basic images on one Yamaha/phone combination does not establish sustained map-rendering reliability, safe route guidance, or long-duration screen-off operation. A later owner report confirms that map display worked for about 20 minutes before a persistent failure; see the testing record.
 
 ## Engineering principles retained
 
