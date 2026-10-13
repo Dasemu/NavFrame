@@ -29,6 +29,7 @@ class MapFrameComposer {
             }
 
             val lost = state.navigationStatus == NavigationStatus.GPS_LOST
+            val approximate = lost && state.accuracyMeters?.let { it.isFinite() && it > AndroidLocationProvider.GUIDANCE_ACCURACY_METERS && it <= AndroidLocationProvider.MAP_ACCURACY_METERS } == true
             val accent = Color.rgb(80, 227, 194)
             val guidanceVisible = state.route != null && state.navigationStatus != NavigationStatus.ROUTE_PREVIEW
             val preview = state.route != null && !guidanceVisible
@@ -39,6 +40,7 @@ class MapFrameComposer {
             canvas.drawRect(0f, 0f, WIDTH.toFloat(), topHeight.toFloat(), paint)
             val modeText = if (mode == NavigationMode.MAP_DEMO) "DEMO" else "GPS"
             val routeText = when {
+                approximate -> "POSICIÓN APROXIMADA"
                 lost -> "SIN SEÑAL GPS"
                 unavailable || map == null -> "MAPA NO DISPONIBLE"
                 state.route != null -> "RUTA"
@@ -49,6 +51,7 @@ class MapFrameComposer {
             if (guidanceVisible) {
                 val warning = when {
                     unavailable || map == null -> "GUIADO EN ESPERA · SIN MAPA"
+                    approximate -> "PRECISIÓN BAJA · guiado en espera"
                     lost -> "SIN GPS · esperando posición precisa"
                     state.navigationStatus == NavigationStatus.REROUTING -> "RECALCULANDO · espera nueva ruta"
                     state.navigationStatus == NavigationStatus.OFF_ROUTE -> "FUERA DE RUTA · revisa el recorrido"

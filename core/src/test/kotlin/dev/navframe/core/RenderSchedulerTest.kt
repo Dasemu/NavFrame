@@ -126,6 +126,17 @@ class RenderSchedulerTest {
         assertTrue(scheduler.renderIfDue(first.copy(accuracyMeters = null, bearing = Float.NaN), 4_000))
     }
 
+    @Test fun stationaryCompassRotationRedrawsOnlyWhenEnabledAndWithinItsRateLimit() {
+        val scheduler = RenderScheduler(RenderScheduleConfig(stoppedMaxFps = .5, redrawStationaryBearing = true))
+        val first = state().copy(speed = 0f, bearing = 10f)
+        assertTrue(scheduler.renderIfDue(first, 0))
+        assertFalse(scheduler.renderIfDue(first.copy(bearing = 40f), 1_000))
+        assertTrue(scheduler.renderIfDue(first.copy(bearing = 40f), 2_000))
+        val original = RenderScheduler()
+        original.renderIfDue(first, 0)
+        assertFalse(original.renderIfDue(first.copy(bearing = 40f), 2_000))
+    }
+
     @Test fun invalidConfigurationIsRejected() {
         assertThrows(IllegalArgumentException::class.java) { RenderScheduleConfig(movingMaxFps = Double.NaN) }
         assertThrows(IllegalArgumentException::class.java) { RenderScheduleConfig(distanceLabelStepMeters = 0) }
