@@ -61,6 +61,7 @@ class MapFrameComposer {
                 if (warning != null) {
                     text(fitted(warning, 16f, 460f), 10f, 39f, 16f, if (state.navigationStatus == NavigationStatus.ARRIVED) accent else Color.YELLOW)
                 } else {
+                    val imported = state.route?.imported == true
                     val maneuver = state.nextManeuver
                     val direction = maneuverDirection(maneuver?.type).name
                     canvas.save()
@@ -75,16 +76,16 @@ class MapFrameComposer {
                     else if (direction.contains("UTURN") || direction.contains("U_TURN")) {
                         canvas.drawArc(-12f, -14f, 12f, 11f, 180f, 180f, false, paint)
                         canvas.drawLine(-12f, -2f, -12f, 15f, paint); canvas.drawLine(12f, -2f, 12f, 15f, paint)
-                    } else canvas.drawPath(icon, paint)
+                    } else if (!imported) canvas.drawPath(icon, paint)
                     canvas.restore()
                     paint.strokeCap = Paint.Cap.BUTT
-                    text(fitted(maneuver?.instruction ?: "Continúa por la ruta", 15f, 392f), 48f, 30f, 15f)
+                    text(fitted(maneuver?.instruction ?: if (imported) "Sigue el trazado GPX" else "Continúa por la ruta", 15f, 392f), 48f, 30f, 15f)
                     val next = state.distanceToNextManeuverMeters?.let { if (it >= 1000) "%.1f km".format(java.util.Locale.ROOT, it / 1000.0) else "$it m" } ?: "-- m"
-                    text(next, 48f, 49f, 19f, accent)
+                    text(if (imported) "Sin indicaciones de giro" else next, 48f, 49f, if (imported) 12f else 19f, accent)
                 }
             } else if (preview) {
                 val route = requireNotNull(state.route)
-                val summary = "PREVIA · %.1f km · %d min".format(java.util.Locale.ROOT, route.distanceMeters / 1000.0, (route.durationSeconds + 59) / 60)
+                val summary = if (route.imported) "GPX · %.1f km · seguir trazado".format(java.util.Locale.ROOT, route.distanceMeters / 1000.0) else "PREVIA · %.1f km · %d min".format(java.util.Locale.ROOT, route.distanceMeters / 1000.0, (route.durationSeconds + 59) / 60)
                 text(fitted(summary, 13f, 460f), 8f, 31f, 13f)
             }
 
