@@ -31,6 +31,10 @@ Set up `local.properties` for your own Android SDK when needed. It is excluded f
 
 Version 0.13.2 automatically saves the latest 100 TFT map failures and recoveries on the phone. After a reboot or empty battery, open **Information and licenses → TFT map diagnosis → Share** to export the saved history. It excludes coordinates, URLs, route/search text, and Bluetooth identifiers. See [Persistent TFT diagnostics](docs/TFT_DIAGNOSTICS.md) for retention and limitations.
 
+## Automated builds
+
+GitHub Actions uploads a debug APK artifact for pushes to `development`. Pushes to `main` publish a signed production APK release after build, tests, lint and signature checks pass. Production signing requires the repository secrets described in [Android builds and releases](docs/ANDROID_RELEASES.md). Pull requests run checks without publishing releases.
+
 ## Documentation
 
 - [Documentation index](docs/README.md)

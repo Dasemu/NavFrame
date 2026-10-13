@@ -1,13 +1,15 @@
 name: Android build and checks
 on:
   push:
-    branches: [main]
+    branches: [main, development]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+# Grouping by branch would drop pending builds during rapid pushes.
 concurrency:
-  group: android-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: android-${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -23,15 +25,133 @@ jobs:
         run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
       - name: Build, unit tests and lint
-        run: ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :core:test :navilite:testDebugUnitTest
+        run: ./gradlew --no-daemon --max-workers=4 :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :core:test :navilite:testDebugUnitTest
       - name: Preserve check reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-check-reports
+          name: android-check-reports-${{ github.run_id }}
           path: |
             app/build/reports/
             core/build/reports/
             navilite/build/reports/
           if-no-files-found: ignore
           retention-days: 7
+      - name: Upload development debug APK
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/development'
+        uses: actions/upload-artifact@v4
+        with:
+          name: navframe-debug-${{ github.sha }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install Android compile SDK
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Restore production signing key
+        env:
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in ANDROID_RELEASE_KEYSTORE_BASE64 ANDROID_RELEASE_KEYSTORE_PASSWORD ANDROID_RELEASE_KEY_ALIAS ANDROID_RELEASE_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing production signing secret: $name (see docs/ANDROID_RELEASES.md)"
+              exit 1
+            fi
+          done
+          umask 077
+          printf '%s' "$ANDROID_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/navframe-release.p12"
+          echo "NAVFRAME_KEYSTORE_PATH=$RUNNER_TEMP/navframe-release.p12" >> "$GITHUB_ENV"
+      - name: Build signed production APK and lint
+        env:
+          NAVFRAME_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          NAVFRAME_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          NAVFRAME_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Preserve numeric versionName for the diagnostic history schema.
+          VERSION_CODE=$((1000000 + GITHUB_RUN_NUMBER))
+          ./gradlew --no-daemon --max-workers=4 :app:assembleRelease :app:lintRelease -PnavframeVersionCode="$VERSION_CODE"
+      - name: Verify signature and prepare release files
+        id: package
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          "$SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+          python3 - <<'PY'
+          import json, os, pathlib, re, shutil, hashlib
+          metadata = json.loads(pathlib.Path('app/build/outputs/apk/release/output-metadata.json').read_text())
+          item = metadata['elements'][0]
+          version = item['versionName']
+          if not re.fullmatch(r'[0-9]+(?:\.[0-9]+){1,3}', version):
+              raise SystemExit('Unexpected versionName')
+          if item['versionCode'] != 1000000 + int(os.environ['GITHUB_RUN_NUMBER']):
+              raise SystemExit('Unexpected production versionCode')
+          tag = f"app-v{version}-build-{os.environ['GITHUB_RUN_NUMBER']}-{os.environ['GITHUB_SHA'][:12]}"
+          folder = pathlib.Path(os.environ['RUNNER_TEMP']) / 'navframe-release-output'; folder.mkdir()
+          apk = folder / f'navframe-{tag}.apk'
+          shutil.copyfile('app/build/outputs/apk/release/app-release.apk', apk)
+          (folder / 'SHA256SUMS.txt').write_text(f'{hashlib.sha256(apk.read_bytes()).hexdigest()}  {apk.name}\n')
+          (folder / 'build-info.json').write_text(json.dumps({'versionName': version, 'versionCode': item['versionCode'], 'commit': os.environ['GITHUB_SHA'], 'runNumber': int(os.environ['GITHUB_RUN_NUMBER'])}, indent=2) + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'tag={tag}\nversion={version}\ndirectory={folder}\n')
+          PY
+      - name: Publish production release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.package.outputs.tag }}
+          VERSION_NAME: ${{ steps.package.outputs.version }}
+          RELEASE_DIRECTORY: ${{ steps.package.outputs.directory }}
+        run: |
+          set -euo pipefail
+          # A rerun may finish its own draft but cannot replace published assets.
+          if gh release view "$RELEASE_TAG" --json isDraft,targetCommitish > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
+            python3 - <<'PY'
+          import json, os, pathlib
+          release = json.loads(pathlib.Path(os.environ['RUNNER_TEMP'], 'existing-release.json').read_text())
+          if release['targetCommitish'] != os.environ['GITHUB_SHA']:
+              raise SystemExit('Existing release targets another commit')
+          PY
+            if [[ "$(python3 -c 'import json,os,pathlib; print(str(json.loads(pathlib.Path(os.environ["RUNNER_TEMP"], "existing-release.json").read_text())["isDraft"]).lower())')" == false ]]; then
+              echo "Production release already published; preserving its assets."
+              exit 0
+            fi
+            gh release upload "$RELEASE_TAG" "$RELEASE_DIRECTORY"/* --clobber
+          else
+            printf 'Signed production APK for commit %s.\n\nVersion code: %s. Checksums and build metadata are attached.\n' "$GITHUB_SHA" "$((1000000 + GITHUB_RUN_NUMBER))" > "$RUNNER_TEMP/release-notes.md"
+            gh release create "$RELEASE_TAG" "$RELEASE_DIRECTORY"/* --draft --target "$GITHUB_SHA" --title "NavFrame $VERSION_NAME · build $GITHUB_RUN_NUMBER" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          # An older build finishing late cannot replace the current main release as latest.
+          LATEST=false
+          if [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" == "$GITHUB_SHA" ]]; then
+            LATEST=true
+          fi
+          gh release edit "$RELEASE_TAG" --draft=false --latest="$LATEST"
+      - name: Preserve production lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-lint-${{ github.run_id }}
+          path: app/build/reports/lint-results-release.*
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/navframe-release.p12"
