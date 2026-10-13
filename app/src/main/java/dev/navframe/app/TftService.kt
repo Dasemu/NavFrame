@@ -446,7 +446,7 @@ class TftService : Service() {
                         if (lost && state.navigationStatus != NavigationStatus.GPS_LOST) {
                             state = state.copy(speed = 0f, bearing = Float.NaN, navigationStatus = NavigationStatus.GPS_LOST, accuracyMeters = null)
                         }
-                        state = withRoute(state, false)
+                        state = withRoute(state, false).copy(bearing = provider.currentBearing)
                         latestNavigationState = state
                         checkSpeedCameras(state, now)
                         if (state.navigationStatus == NavigationStatus.OFF_ROUTE && reroutePolicy.shouldRequest(state, now)) requestReroute(false)
@@ -586,7 +586,7 @@ class TftService : Service() {
         }
         if (preparedDestinationDirty) { mutableRouteInfo.value = "Destino cambiado · calcula una nueva ruta primero."; return }
         val plan = routePlan ?: run { mutableRouteInfo.value = "Calcula una ruta primero."; return }
-        if (!preview && !plan.demo && !hasFreshGpsFix()) { mutableRouteInfo.value = "Espera GPS reciente y preciso antes de iniciar guiado"; return }
+        if (!preview && !plan.demo && !hasGuidanceGpsFix()) { mutableRouteInfo.value = "Espera GPS reciente y preciso antes de iniciar guiado"; return }
         shownRoute = plan
         routePreview = preview
         guidance = RouteGuidanceTracker(plan.route)
@@ -679,7 +679,7 @@ class TftService : Service() {
     }
 
     private fun isMapMode(mode: NavigationMode) = mode == NavigationMode.MAP_DEMO || mode == NavigationMode.MAP_GPS
-    private fun createScheduler(mode: NavigationMode) = if (isMapMode(mode)) RenderScheduler(RenderScheduleConfig(stoppedMaxFps = .5, movingMaxFps = 1.0, turningMaxFps = 1.0, positionDeltaMeters = 5.0, bearingDeltaDegrees = 5f)) else RenderScheduler()
+    private fun createScheduler(mode: NavigationMode) = if (isMapMode(mode)) RenderScheduler(RenderScheduleConfig(stoppedMaxFps = .5, movingMaxFps = 1.0, turningMaxFps = 1.0, positionDeltaMeters = 5.0, bearingDeltaDegrees = 5f, redrawStationaryBearing = true)) else RenderScheduler()
 
     fun mapSource(): TileSource {
         val preferences = getSharedPreferences("map", MODE_PRIVATE)
@@ -702,7 +702,10 @@ class TftService : Service() {
     }
     fun isRealSessionRequested(): Boolean = realRequested
     fun isGpsSessionActive(): Boolean = gpsRequested
-    fun hasFreshGpsFix(): Boolean = lastGpsFix?.let { it.accuracyMeters.isFinite() && it.accuracyMeters <= 25 && SystemClock.elapsedRealtime() - lastGpsElapsed in 0..15_000 && (locationProvider?.providerEnabled?.value == true || (phoneVisible && visibleGpsProvider?.providerEnabled?.value == true)) } == true
+    fun hasFreshGpsFix(): Boolean = usableGpsFix(AndroidLocationProvider.MAP_ACCURACY_METERS)
+    fun usesCompassHeading(): Boolean = (locationProvider ?: visibleGpsProvider)?.headingFromCompass == true
+    private fun hasGuidanceGpsFix(): Boolean = usableGpsFix(AndroidLocationProvider.GUIDANCE_ACCURACY_METERS)
+    private fun usableGpsFix(maxAccuracy: Float): Boolean = lastGpsFix?.let { it.accuracyMeters.isFinite() && it.accuracyMeters in 0f..maxAccuracy && SystemClock.elapsedRealtime() - lastGpsElapsed in 0..15_000 && (locationProvider?.providerEnabled?.value == true || (phoneVisible && visibleGpsProvider?.providerEnabled?.value == true)) } == true
     private fun stopVisibleGps() {
         visibleGpsJob?.cancel(); visibleGpsJob = null
         try { visibleGpsProvider?.close() } catch (_: SecurityException) { }
@@ -725,13 +728,17 @@ class TftService : Service() {
                         lastGpsFix = fix; lastGpsElapsed = provider.lastFixElapsedMs
                         mutableGpsReady.value = hasFreshGpsFix()
                         if (!gpsRequested && mutableMode.value !in listOf(NavigationMode.MAP_DEMO, NavigationMode.DEMO)) {
-                            latestNavigationState = latestNavigationState.copy(position = fix.position, bearing = fix.bearing, speed = fix.speedMetersPerSecond, accuracyMeters = fix.accuracyMeters, navigationStatus = if (routePreview && shownRoute != null) NavigationStatus.ROUTE_PREVIEW else if (fix.accuracyMeters <= 25) NavigationStatus.NAVIGATING else NavigationStatus.GPS_LOST)
+                            latestNavigationState = latestNavigationState.copy(position = fix.position, bearing = fix.bearing, speed = fix.speedMetersPerSecond, accuracyMeters = fix.accuracyMeters, navigationStatus = if (routePreview && shownRoute != null) NavigationStatus.ROUTE_PREVIEW else if (fix.accuracyMeters <= AndroidLocationProvider.MAP_ACCURACY_METERS) NavigationStatus.NAVIGATING else NavigationStatus.GPS_LOST)
                         }
+                    } }
+                    launch { provider.bearings.collect { bearing ->
+                        if (!gpsRequested && mutableMode.value !in listOf(NavigationMode.MAP_DEMO, NavigationMode.DEMO)) latestNavigationState = latestNavigationState.copy(bearing = bearing)
                     } }
                     provider.start()
                     while (isActive) {
                         mutableGpsReady.value = hasFreshGpsFix()
-                        if (!gpsRequested && (!provider.providerEnabled.value || SystemClock.elapsedRealtime() - provider.lastFixElapsedMs > 15_000) && mutableMode.value !in listOf(NavigationMode.MAP_DEMO, NavigationMode.DEMO)) latestNavigationState = latestNavigationState.copy(speed = 0f, bearing = Float.NaN, navigationStatus = NavigationStatus.GPS_LOST)
+                        if (!gpsRequested && mutableMode.value !in listOf(NavigationMode.MAP_DEMO, NavigationMode.DEMO)) latestNavigationState = latestNavigationState.copy(bearing = provider.currentBearing)
+                        if (!gpsRequested && (!provider.providerEnabled.value || SystemClock.elapsedRealtime() - provider.lastFixElapsedMs > 15_000) && mutableMode.value !in listOf(NavigationMode.MAP_DEMO, NavigationMode.DEMO)) latestNavigationState = latestNavigationState.copy(speed = 0f, bearing = Float.NaN, accuracyMeters = null, navigationStatus = NavigationStatus.GPS_LOST)
                         delay(1_000)
                     }
                 }
