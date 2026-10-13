@@ -33,17 +33,30 @@ internal data class MapDiagnosticEvent(
     val connection: ConnectionState,
     val androidApi: Int,
     val appVersion: String = BuildConfig.VERSION_NAME,
+    val errorClass: String = "SDK_CALLBACK",
+    val sdkEvidence: String = "",
+    val firstTimestampMs: Long = timestampMs,
+    val occurrences: Int = 1,
+    val screenInteractive: Boolean? = null,
+    val lowMemory: Boolean? = null,
+    val availableMemoryMb: Long? = null,
 ) {
     init {
         require(timestampMs >= 0 && durationMs >= 0 && retryMs >= 0 && attempts in 1..4)
         require(androidApi > 0 && appVersion.matches(Regex("[0-9]+(?:\\.[0-9]+){1,3}")))
+        require(availableMemoryMb == null || availableMemoryMb >= 0)
+        require(firstTimestampMs in 0..timestampMs && occurrences > 0)
+        require(errorClass.matches(Regex("[A-Za-z0-9_$]{1,80}")))
+        require(sdkEvidence.isEmpty() || sdkEvidence.matches(Regex("[A-Z_]{1,256}")))
         require(httpStatus == null || httpStatus in 400..599)
         require((kind == MapDiagnosticKind.FAILURE) == (failure != null))
     }
 
     fun reportLine(): String = "${Instant.ofEpochMilli(timestampMs)} · ${kind.name} · NavFrame $appVersion · Android $androidApi · MapLibre 13.5.2\n" +
-        "${source.name} · red ${network.name} · ${failure?.name ?: "OK"}/${stage.name} · ${resource.name}/${reason.name}${httpStatus?.let { "/HTTP_$it" } ?: ""}\n" +
-        "$durationMs ms · intento $attempts · reintento $retryMs ms · ${mode.name} · ${navigation.name} · TFT ${connection.name}"
+        "${source.name} · red ${network.name} · ${failure?.name ?: "OK"}/${stage.name} · ${resource.name}/${reason.name}${httpStatus?.let { "/HTTP_$it" } ?: ""}/$errorClass${if (sdkEvidence.isEmpty()) "" else "/WORDS_$sdkEvidence"}\n" +
+        "$durationMs ms · intento $attempts · reintento $retryMs ms · ${mode.name} · ${navigation.name} · TFT ${connection.name}" +
+        "\nPantalla ${screenInteractive?.let { if (it) "ENCENDIDA" else "APAGADA" } ?: "UNKNOWN"} · memoria baja ${lowMemory ?: "UNKNOWN"} · disponible ${availableMemoryMb ?: "UNKNOWN"} MiB" +
+        if (occurrences == 1) "" else "\nAgrupado: $occurrences fallos · primero ${Instant.ofEpochMilli(firstTimestampMs)} · último ${Instant.ofEpochMilli(timestampMs)} · estados del último fallo"
 
     fun toJson(): JSONObject = JSONObject().put("kind", kind.name).put("timestampMs", timestampMs)
         .put("source", source.name).put("network", network.name).put("stage", stage.name)
@@ -51,6 +64,10 @@ internal data class MapDiagnosticEvent(
         .put("httpStatus", httpStatus ?: JSONObject.NULL).put("durationMs", durationMs).put("attempts", attempts)
         .put("retryMs", retryMs).put("mode", mode.name).put("navigation", navigation.name)
         .put("connection", connection.name).put("androidApi", androidApi).put("appVersion", appVersion)
+        .put("errorClass", errorClass).put("sdkEvidence", sdkEvidence)
+        .put("firstTimestampMs", firstTimestampMs).put("occurrences", occurrences)
+        .put("screenInteractive", screenInteractive ?: JSONObject.NULL).put("lowMemory", lowMemory ?: JSONObject.NULL)
+        .put("availableMemoryMb", availableMemoryMb ?: JSONObject.NULL)
 
     companion object {
         fun fromJson(value: JSONObject) = MapDiagnosticEvent(
@@ -64,6 +81,12 @@ internal data class MapDiagnosticEvent(
             mode = NavigationMode.valueOf(value.getString("mode")), navigation = NavigationStatus.valueOf(value.getString("navigation")),
             connection = ConnectionState.valueOf(value.getString("connection")), androidApi = value.getInt("androidApi"),
             appVersion = value.getString("appVersion"),
+            errorClass = value.optString("errorClass", "SDK_CALLBACK"), sdkEvidence = value.optString("sdkEvidence", ""),
+            firstTimestampMs = value.optLong("firstTimestampMs", value.getLong("timestampMs")),
+            occurrences = value.optInt("occurrences", 1),
+            screenInteractive = if (value.isNull("screenInteractive")) null else value.getBoolean("screenInteractive"),
+            lowMemory = if (value.isNull("lowMemory")) null else value.getBoolean("lowMemory"),
+            availableMemoryMb = if (value.isNull("availableMemoryMb")) null else value.getLong("availableMemoryMb"),
         )
     }
 }
@@ -78,7 +101,17 @@ internal class MapDiagnosticHistory(private val directory: File) {
         try {
             // An unreadable history cannot supply diagnostic text; the next event starts a clean history.
             val previous = try { readEvents() } catch (_: Exception) { emptyList() }
-            val events = (previous + event).takeLast(MAX_EVENTS)
+            val last = previous.lastOrNull()
+            // Keep the initial retries, then summarize identical saturated retries without losing onset.
+            val repeated = last != null && event.kind == MapDiagnosticKind.FAILURE && last.kind == event.kind &&
+                last.attempts == 4 && event.attempts == 4 && event.timestampMs >= last.timestampMs &&
+                last.source == event.source && last.failure == event.failure && last.stage == event.stage &&
+                last.resource == event.resource && last.reason == event.reason && last.httpStatus == event.httpStatus &&
+                last.errorClass == event.errorClass && last.sdkEvidence == event.sdkEvidence &&
+                last.mode == event.mode && last.appVersion == event.appVersion && last.androidApi == event.androidApi
+            val events = if (repeated) previous.dropLast(1) + event.copy(
+                firstTimestampMs = last!!.firstTimestampMs, occurrences = (last.occurrences.toLong() + 1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            ) else (previous + event).takeLast(MAX_EVENTS)
             val bytes = JSONArray(events.map { it.toJson() }).toString().toByteArray(Charsets.UTF_8)
             check(bytes.size <= MAX_BYTES)
             val output = atomic.startWrite()

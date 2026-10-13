@@ -43,7 +43,8 @@ class MapDiagnosticHistoryTest {
     @Test fun committedFailuresAndRecoverySurviveNewStoreInstancesWithoutNativeMessages() {
         val raw = "Failed to load glyph https://private.example/fonts?token=secret HTTP status 403 at 43.361234,-5.856789"
         val detail = mapErrorDetail(raw)
-        val failure = event().copy(failure = classifyMapRenderFailure(raw), resource = detail.resource, reason = detail.reason, httpStatus = detail.httpStatus)
+        val failure = event().copy(failure = classifyMapRenderFailure(raw), resource = detail.resource, reason = detail.reason, httpStatus = detail.httpStatus,
+            sdkEvidence = detail.sdkEvidence, errorClass = "SDK_CALLBACK", screenInteractive = false, lowMemory = true, availableMemoryMb = 42)
         assertTrue(store.record(failure))
         assertTrue(store.record(event(kind = MapDiagnosticKind.RECOVERED)))
         val reopened = MapDiagnosticHistory(context)
@@ -70,6 +71,38 @@ class MapDiagnosticHistoryTest {
         assertTrue(store.clear())
         assertTrue(MapDiagnosticHistory(context).report().contains("Sin eventos guardados"))
         assertFalse(store.file.exists())
+    }
+
+    @Test fun repeatedSaturatedFailuresPreserveOnsetAndRecoveryInsteadOfEvictingIt() {
+        for (index in 1..3) assertTrue(store.record(event(timestamp = index.toLong()).copy(attempts = index)))
+        for (index in 4..204) assertTrue(store.record(event(timestamp = index.toLong()).copy(attempts = 4)))
+        assertTrue(store.record(event(timestamp = 205, kind = MapDiagnosticKind.RECOVERED).copy(attempts = 4)))
+        val report = MapDiagnosticHistory(context).report()
+        assertTrue(report.contains("(5/100)"))
+        assertTrue(report.contains("1970-01-01T00:00:00.001Z"))
+        assertTrue(report.contains("Agrupado: 201 fallos"))
+        assertTrue(report.contains("primero 1970-01-01T00:00:00.004Z"))
+        assertTrue(report.contains("último 1970-01-01T00:00:00.204Z"))
+        assertTrue(report.contains("RECOVERED"))
+        assertTrue(store.record(event(timestamp = 206)))
+        assertTrue(store.report().contains("(6/100)"))
+    }
+
+    @Test fun legacyHistoryRemainsReadableAndNewEvidenceIsPersisted() {
+        val json = event().toJson()
+        for (key in listOf("errorClass", "sdkEvidence", "firstTimestampMs", "occurrences", "screenInteractive", "lowMemory", "availableMemoryMb")) json.remove(key)
+        store.file.parentFile!!.mkdirs()
+        store.file.writeText(org.json.JSONArray().put(json).toString())
+        assertTrue(store.report().contains("TIMEOUT/STYLE_READY"))
+        val raw = "Snapshot failed no tile data https://private.example?token=secret"
+        val detail = mapErrorDetail(raw)
+        assertTrue(store.record(event(timestamp = 1_792_000_000_001).copy(sdkEvidence = detail.sdkEvidence,
+            screenInteractive = false, lowMemory = true, availableMemoryMb = 42)))
+        val report = MapDiagnosticHistory(context).report()
+        assertTrue(report.contains("WORDS_SNAPSHOT_FAILED_NO_TILE_DATA"))
+        assertTrue(report.contains("Pantalla APAGADA"))
+        assertTrue(report.contains("disponible 42 MiB"))
+        assertFalse(store.file.readText().contains("private.example"))
     }
 
     @Test fun interruptedAtomicReplacementLeavesTheLastCommittedHistoryReadable() {
