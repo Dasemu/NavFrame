@@ -94,7 +94,9 @@ class MapLibreTftRenderer(context: Context, private val source: MapDataSource, p
                 })
             }
         }
+        phase(MapRenderStage.CAMERA_UPDATE)
         current.setCameraPosition(cameraPosition)
+        phase(MapRenderStage.ROUTE_UPDATE)
         (current.getSource("navframe-route") as? GeoJsonSource)?.setGeoJson(routeGeoJson(state.route))
         continuation.invokeOnCancellation {
             // An old callback must not be delivered into a new capture: discard after cancellation/error.
@@ -103,6 +105,7 @@ class MapLibreTftRenderer(context: Context, private val source: MapDataSource, p
         }
         try {
             phase(if (current.getSource("navframe-route") == null) MapRenderStage.STYLE_LOADING else MapRenderStage.STYLE_READY)
+            phase(MapRenderStage.SNAPSHOT_REQUESTED)
             current.start({ snapshot ->
                 if (continuation.isActive && !closed && snapshotter === current) phase(MapRenderStage.SNAPSHOT_READY)
                 val bitmap = snapshot.bitmap
@@ -120,7 +123,7 @@ class MapLibreTftRenderer(context: Context, private val source: MapDataSource, p
                 main.post {
                     current.cancel()
                     if (snapshotter === current) snapshotter = null
-                    if (continuation.isActive) continuation.resumeWithException(MapRenderException(classifyMapRenderFailure(reason), stage, mapErrorDetail(reason)))
+                    if (continuation.isActive) continuation.resumeWithException(MapRenderException(classifyMapRenderFailure(reason), stage, mapErrorDetail(reason, "SnapshotterErrorCallback")))
                 }
             })
         } catch (error: Exception) {
