@@ -204,7 +204,7 @@ open class MainActivity : Activity() {
 
                 val demo = current.navigationMode.value == NavigationMode.MAP_DEMO || current.navigationMode.value == NavigationMode.DEMO
                 guidance.text = when (state.navigationStatus) {
-                    NavigationStatus.GPS_LOST -> "Sin GPS reciente y preciso"
+                    NavigationStatus.GPS_LOST -> if (current.hasFreshGpsFix()) "Posición aproximada · esperando precisión para guiar" else "Sin ubicación reciente"
                     NavigationStatus.REROUTING -> "Recalculando ruta…"
                     NavigationStatus.OFF_ROUTE -> "Fuera de ruta"
                     NavigationStatus.ARRIVED -> "Has llegado al destino"
@@ -215,8 +215,9 @@ open class MainActivity : Activity() {
                 val next = state.distanceToNextManeuverMeters?.let { "$it m" } ?: ""
                 val remaining = state.remainingDistanceMeters?.let { "%.1f km restantes".format(java.util.Locale.ROOT, it / 1000.0) } ?: ""
                 val eta = state.etaEpochMillis?.let { "ETA " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.ROOT).format(java.util.Date(it)) } ?: ""
-                val accuracy = state.accuracyMeters?.takeIf { it.isFinite() }?.let { "GPS ±${it.toInt()} m" } ?: ""
-                progress.text = listOf(next, remaining, eta, accuracy).filter { it.isNotEmpty() }.joinToString(" · ")
+                val accuracy = state.accuracyMeters?.takeIf { it.isFinite() }?.let { "${if (it > AndroidLocationProvider.GUIDANCE_ACCURACY_METERS) "Ubicación aproximada" else "Ubicación"} ±${it.toInt()} m" } ?: ""
+                val heading = if (!demo) state.bearing.takeIf { it.isFinite() }?.let { "${if (current.usesCompassHeading()) "Brújula" else "Rumbo GPS"} ${it.toInt()}°" } ?: "" else ""
+                progress.text = listOf(next, remaining, eta, accuracy, heading).filter { it.isNotEmpty() }.joinToString(" · ")
             } }
         }
     }
@@ -267,7 +268,7 @@ open class MainActivity : Activity() {
                 if (hasReliablePosition()) { hidePositionNotice(); recenterPhoneMap() }
                 else showPositionNotice(when {
                     current == null || !current.isGpsSessionActive() && current.navigationState.value.accuracyMeters == null -> "Buscando señal GPS…"
-                    current.navigationState.value.accuracyMeters?.let { !it.isFinite() || it > 25f } == true -> "Señal GPS poco precisa"
+                    current.navigationState.value.accuracyMeters?.let { !it.isFinite() || it > AndroidLocationProvider.MAP_ACCURACY_METERS } == true -> "Señal GPS poco precisa"
                     else -> "Esperando una posición GPS reciente"
                 })
             }

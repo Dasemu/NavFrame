@@ -27,6 +27,10 @@ python3 -m unittest discover -s tools/offline -p 'test_*.py'
 
 Set up `local.properties` for your own Android SDK when needed. It is excluded from Git. See [Contributing](CONTRIBUTING.md) for the development and review process.
 
+## Location and compass
+
+Version 0.13.3 uses available native Android location sources and recent cached fixes to avoid waiting exclusively for a new satellite fix. The map can recenter on a recent approximate position with accuracy up to 100 metres; starting route guidance still requires 25 metres. A compass heading orients the map at low speed, while usable movement course takes priority when riding. See [Location and compass](docs/LOCATION_AND_COMPASS.md) for behavior and device-validation limits.
+
 ## TFT diagnostic history
 
 Version 0.13.2 automatically saves the latest 100 TFT map failures and recoveries on the phone. After a reboot or empty battery, open **Information and licenses → TFT map diagnosis → Share** to export the saved history. It excludes coordinates, URLs, route/search text, and Bluetooth identifiers. See [Persistent TFT diagnostics](docs/TFT_DIAGNOSTICS.md) for retention and limitations.

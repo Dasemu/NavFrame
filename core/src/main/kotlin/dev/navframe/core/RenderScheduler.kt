@@ -13,6 +13,7 @@ data class RenderScheduleConfig(
     val turningDeltaDegrees: Float = 15f,
     val speedDeltaMetersPerSecond: Float = 0.5f,
     val distanceLabelStepMeters: Int = 10,
+    val redrawStationaryBearing: Boolean = false,
 ) {
     init {
         require(listOf(stoppedMaxFps, movingMaxFps, turningMaxFps).all { it.isFinite() && it > 0 })
@@ -77,7 +78,7 @@ class RenderScheduler(private val config: RenderScheduleConfig = RenderScheduleC
         old.etaEpochMillis?.div(60_000) != fresh.etaEpochMillis?.div(60_000) ||
         abs(old.speed - fresh.speed) >= config.speedDeltaMetersPerSecond ||
         distanceMeters(old.position, fresh.position) >= config.positionDeltaMeters ||
-        (max(old.speed, fresh.speed) >= config.movingSpeedMetersPerSecond &&
+        ((config.redrawStationaryBearing || max(old.speed, fresh.speed) >= config.movingSpeedMetersPerSecond) &&
             bearingDistance(old.bearing, fresh.bearing) >= config.bearingDeltaDegrees)
 
     private fun label(distance: Int?): Int? = distance?.div(config.distanceLabelStepMeters)
