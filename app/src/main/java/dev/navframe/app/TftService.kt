@@ -72,6 +72,8 @@ class TftService : Service() {
     private val mutableMapDiagnostic = MutableStateFlow("TFT MAP · sin captura")
     val mapDiagnostic = mutableMapDiagnostic.asStateFlow()
     private var lastMapFailureDiagnostic = "sin fallo registrado"
+    private val mapDiagnosticHistory by lazy { MapDiagnosticHistory(applicationContext) }
+    private var mapHistoryWriteFailed = false
     private var mapRenderStarted = 0L
     private var mapRenderStage = MapRenderStage.INITIALIZE
     private var mapRetryAt = 0L
@@ -695,7 +697,8 @@ class TftService : Service() {
         val accuracy = when { fix == null -> "SIN FIX"; !fix.accuracyMeters.isFinite() -> "DESCONOCIDA"; fix.accuracyMeters <= 5 -> "0–5 m"; fix.accuracyMeters <= 15 -> "6–15 m"; fix.accuracyMeters <= 25 -> "16–25 m"; else -> ">25 m" }
         val age = if (fix == null) "SIN FIX" else if (SystemClock.elapsedRealtime() - lastGpsElapsed <= 15_000) "RECIENTE" else "CADUCADO"
         val network = when (mapRenderer?.networkConnected ?: lastMapNetworkConnected) { true -> "CONECTADA"; false -> "SIN CONEXIÓN"; null -> "SIN COMPROBAR" }
-        return "NavFrame 0.13.1 · Android ${Build.VERSION.SDK_INT} · ${Build.MANUFACTURER} ${Build.MODEL}\nMapLibre OpenGL 13.5.2 · TFT nativo 480×240\nOrigen del mapa: $origin\nRed TFT: $network\n${mutableMapDiagnostic.value}\nÚltimo fallo: $lastMapFailureDiagnostic\nGPS: $age · precisión $accuracy · ${mutableNavigationState.value.navigationStatus}\nTFT: ${mutableState.value} · modo ${mutableMode.value}\nSin coordenadas, consultas, direcciones ni URLs."
+        val historyWarning = if (mapHistoryWriteFailed) "\nHistorial persistente: último evento no guardado (TFT_MAP_HISTORY_WRITE_FAILED)." else ""
+        return "NavFrame ${BuildConfig.VERSION_NAME} · Android ${Build.VERSION.SDK_INT} · ${Build.MANUFACTURER} ${Build.MODEL}\nMapLibre OpenGL 13.5.2 · TFT nativo 480×240\nOrigen del mapa: $origin\nRed TFT: $network\n${mutableMapDiagnostic.value}\nÚltimo fallo: $lastMapFailureDiagnostic\nGPS: $age · precisión $accuracy · ${mutableNavigationState.value.navigationStatus}\nTFT: ${mutableState.value} · modo ${mutableMode.value}\nSin coordenadas, consultas, direcciones ni URLs.$historyWarning"
     }
     fun isRealSessionRequested(): Boolean = realRequested
     fun isGpsSessionActive(): Boolean = gpsRequested
@@ -765,12 +768,14 @@ class TftService : Service() {
         mapRenderStarted = SystemClock.elapsedRealtime()
         mapRenderStage = MapRenderStage.INITIALIZE
         try {
-            mapRenderOverride?.let { return it(state, mode) }
-            val current = mapRenderer ?: MapLibreTftRenderer(applicationContext, ConfiguredMapDataSource(if (source.uri.startsWith("asset://")) "" else source.uri, source.attribution, applicationContext)) { stage ->
-                mapRenderStage = stage
-                mutableMapDiagnostic.value = "TFT MAP · ${stage.name} · ${if (source.uri.startsWith("file:")) "LOCAL" else "ONLINE"}"
-            }.also { mapRenderer = it }
-            val frame = current.render(state, mode)
+            val frame = mapRenderOverride?.invoke(state, mode) ?: run {
+                val current = mapRenderer ?: MapLibreTftRenderer(applicationContext, ConfiguredMapDataSource(if (source.uri.startsWith("asset://")) "" else source.uri, source.attribution, applicationContext)) { stage ->
+                    mapRenderStage = stage
+                    mutableMapDiagnostic.value = "TFT MAP · ${stage.name} · ${if (source.uri.startsWith("file:")) "LOCAL" else "ONLINE"}"
+                }.also { mapRenderer = it }
+                current.render(state, mode)
+            }
+            if (mapFailures > 0) recordMapEvent(MapDiagnosticKind.RECOVERED, state, mode, source, retryMs = 0)
             mutableMapDiagnostic.value = "TFT MAP · OK · ${SystemClock.elapsedRealtime() - mapRenderStarted} ms · 480×240"
             mapFailures = 0
             mapRetryAt = 0
@@ -779,12 +784,12 @@ class TftService : Service() {
             return frame
         } catch (cancelled: CancellationException) {
             currentCoroutineContext().ensureActive() // A local map timeout is recoverable; STOP is not.
-            return mapUnavailable(state, mode, source.attribution, MapRenderException(MapRenderFailure.TIMEOUT, mapRenderStage))
+            return mapUnavailable(state, mode, source, MapRenderException(MapRenderFailure.TIMEOUT, mapRenderStage))
         } catch (error: Exception) {
-            return mapUnavailable(state, mode, source.attribution, error as? MapRenderException ?: MapRenderException(classifyMapRenderFailure(error.message), mapRenderStage, mapErrorDetail(error.message, error.javaClass.simpleName)))
+            return mapUnavailable(state, mode, source, error as? MapRenderException ?: MapRenderException(classifyMapRenderFailure(error.message), mapRenderStage, mapErrorDetail(error.message, error.javaClass.simpleName)))
         }
     }
-    private suspend fun mapUnavailable(state: NavigationState, mode: NavigationMode, attribution: String, error: MapRenderException): TftFrame {
+    private suspend fun mapUnavailable(state: NavigationState, mode: NavigationMode, source: TileSource, error: MapRenderException): TftFrame {
         lastMapNetworkConnected = mapRenderer?.networkConnected ?: lastMapNetworkConnected
         mapRenderer?.close()
         mapRenderer = null
@@ -795,7 +800,28 @@ class TftService : Service() {
         lastMapFailureDiagnostic = mutableMapDiagnostic.value + " · " + if (mapSource().uri.startsWith("file:")) "LOCAL" else "ONLINE"
         mutableNavigationInfo.value = "MAPA TFT NO DISPONIBLE · ${error.failure.name} · reintento ${retryMs / 1000} s"
         android.util.Log.w("NavFrame", "MAP_UNAVAILABLE code=${error.failure.name} stage=${error.stage.name} retryMs=$retryMs") // No URLs, API tokens or coordinates.
-        return MapFrameComposer().compose(null, null, state, mode, attribution, unavailable = true, failureCode = error.failure.name).also { unavailableMapFrame = it }
+        recordMapEvent(MapDiagnosticKind.FAILURE, state, mode, source, retryMs, error)
+        return MapFrameComposer().compose(null, null, state, mode, source.attribution, unavailable = true, failureCode = error.failure.name).also { unavailableMapFrame = it }
+    }
+
+    private suspend fun recordMapEvent(kind: MapDiagnosticKind, state: NavigationState, mode: NavigationMode, source: TileSource, retryMs: Long, error: MapRenderException? = null) {
+        val network = mapRenderer?.networkConnected ?: lastMapNetworkConnected
+        val event = MapDiagnosticEvent(
+            kind = kind, timestampMs = System.currentTimeMillis(),
+            source = if (source.uri.startsWith("file:")) MapDiagnosticSource.LOCAL else MapDiagnosticSource.ONLINE,
+            network = when (network) { true -> MapDiagnosticNetwork.CONNECTED; false -> MapDiagnosticNetwork.DISCONNECTED; null -> MapDiagnosticNetwork.UNKNOWN },
+            stage = error?.stage ?: MapRenderStage.COMPOSE, failure = error?.failure,
+            resource = error?.detail?.resource ?: MapResourceKind.UNKNOWN, reason = error?.detail?.reason ?: MapFailureReason.UNKNOWN,
+            httpStatus = error?.detail?.httpStatus?.takeIf { it in 400..599 },
+            durationMs = (SystemClock.elapsedRealtime() - mapRenderStarted).coerceAtLeast(0), attempts = mapFailures,
+            retryMs = retryMs, mode = mode, navigation = state.navigationStatus, connection = mutableState.value,
+            androidApi = Build.VERSION.SDK_INT,
+        )
+        val saved = withContext(Dispatchers.IO) {
+            try { mapDiagnosticHistory.record(event) } catch (_: Exception) { false }
+        }
+        mapHistoryWriteFailed = !saved
+        if (!saved) android.util.Log.w("NavFrame", "TFT_MAP_HISTORY_WRITE_FAILED")
     }
 
     private fun updateNotification(text: String) {

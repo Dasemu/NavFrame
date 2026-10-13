@@ -600,14 +600,28 @@ open class MainActivity : Activity() {
         }.setNegativeButton("Cancelar", null).show()
     }
     private fun showInfo() {
-        val text = "NavFrame 0.13.1 · mapas OpenStreetMap. Móvil y Yamaha comparten estado; el TFT se renderiza directamente a 480 × 240, sin captura de pantalla.\n\nDEMO es ficticia. GPS/ETA/guiado deben probarse en condiciones reales. Rutas y búsqueda necesitan conexión; los mapas y lugares incluidos de Asturias se consultan offline. Calcular rutas sigue necesitando Internet.\n\nNominatim recibe el texto de búsqueda, no tu GPS. No envíes información personal/confidencial. Prototipo con máximo 1 petición/s agregado y caché.\n\nNaviLite adaptado de Pillion · PolyForm Noncommercial 1.0.0\nRequired Notice: Copyright 2026 the Pillion authors\n\nFuente online predeterminada incluida: OpenFreeMap · © OpenMapTiles · © OpenStreetMap contributors.\n\nAsturias offline: datos © OpenStreetMap contributors, extracto Geofabrik 28/09/2026, licencia ODbL. Límites 42,9–43,75 N / 7,2–4,45 O; zoom 6–14. Tipografía Noto Sans, SIL OFL 1.1."
+        val text = "NavFrame ${BuildConfig.VERSION_NAME} · mapas OpenStreetMap. Móvil y Yamaha comparten estado; el TFT se renderiza directamente a 480 × 240, sin captura de pantalla.\n\nDEMO es ficticia. GPS/ETA/guiado deben probarse en condiciones reales. Rutas y búsqueda necesitan conexión; los mapas y lugares incluidos de Asturias se consultan offline. Calcular rutas sigue necesitando Internet.\n\nNominatim recibe el texto de búsqueda, no tu GPS. No envíes información personal/confidencial. Prototipo con máximo 1 petición/s agregado y caché.\n\nNaviLite adaptado de Pillion · PolyForm Noncommercial 1.0.0\nRequired Notice: Copyright 2026 the Pillion authors\n\nFuente online predeterminada incluida: OpenFreeMap · © OpenMapTiles · © OpenStreetMap contributors.\n\nAsturias offline: datos © OpenStreetMap contributors, extracto Geofabrik 28/09/2026, licencia ODbL. Límites 42,9–43,75 N / 7,2–4,45 O; zoom 6–14. Tipografía Noto Sans, SIL OFL 1.1."
         val box = column().apply { setPadding(dp(16), 0, dp(16), 0); addView(label(text + "\n\nFuente activa: ${service?.mapSource()?.attribution ?: ConfiguredMapDataSource.DEFAULT_ATTRIBUTION}\nSi una fuente personalizada no declara atribución, corrige el estilo en Ajustes.", 14f)); addView(button("Diagnóstico del mapa TFT") { showMapDiagnostic() }) }
         AlertDialog.Builder(this).setTitle("Información y licencias").setView(ScrollView(this).apply { addView(box) }).setPositiveButton("Cerrar", null).setNeutralButton("Licencias") { _, _ -> showLicenses() }.setNegativeButton("Política búsqueda") { _, _ -> openUrl("https://operations.osmfoundation.org/policies/nominatim/") }.show()
     }
     private fun showMapDiagnostic() {
-        val report = service?.diagnosticReport() ?: "Servicio no disponible"
-        AlertDialog.Builder(this).setTitle("Diagnóstico TFT").setMessage(report).setPositiveButton("Cerrar", null)
-            .setNeutralButton("Compartir") { _, _ -> startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, report), "Compartir diagnóstico")) }.show()
+        scope.launch {
+            val current = service?.diagnosticReport() ?: "Servicio no disponible · el historial guardado sigue accesible."
+            val history = withContext(Dispatchers.IO) { MapDiagnosticHistory(applicationContext).report() }
+            val report = "$current\n\n$history"
+            AlertDialog.Builder(this@MainActivity).setTitle("Diagnóstico TFT").setMessage(report).setPositiveButton("Cerrar", null)
+                .setNeutralButton("Compartir") { _, _ -> startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, report), "Compartir diagnóstico")) }
+                .setNegativeButton("Borrar historial") { _, _ ->
+                    AlertDialog.Builder(this@MainActivity).setTitle("Borrar historial TFT")
+                        .setMessage("Se borrarán los fallos y recuperaciones guardados en este dispositivo.")
+                        .setNegativeButton("Cancelar", null).setPositiveButton("Borrar") { _, _ ->
+                            scope.launch {
+                                val cleared = withContext(Dispatchers.IO) { MapDiagnosticHistory(applicationContext).clear() }
+                                Toast.makeText(this@MainActivity, if (cleared) "Historial borrado" else "No se pudo borrar el historial", Toast.LENGTH_SHORT).show()
+                            }
+                        }.show()
+                }.show()
+        }
     }
     private fun showLicenses() {
         val files = arrayOf("PILLION_LICENSE.md", "MAPLIBRE_LICENSE.md", "GSON_LICENSE.md", "OFFLINE_FONT_LICENSE.md", "OFFLINE_DATA_LICENSE.md")
