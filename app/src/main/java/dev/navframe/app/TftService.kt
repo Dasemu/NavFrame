@@ -723,7 +723,7 @@ class TftService : Service() {
     fun isGpsSessionActive(): Boolean = gpsRequested
     fun hasFreshGpsFix(): Boolean = usableGpsFix(AndroidLocationProvider.MAP_ACCURACY_METERS)
     fun usesCompassHeading(): Boolean = (locationProvider ?: visibleGpsProvider)?.headingFromCompass == true
-    private fun hasGuidanceGpsFix(): Boolean = usableGpsFix(AndroidLocationProvider.GUIDANCE_ACCURACY_METERS)
+    fun hasGuidanceGpsFix(): Boolean = usableGpsFix(AndroidLocationProvider.GUIDANCE_ACCURACY_METERS)
     private fun usableGpsFix(maxAccuracy: Float): Boolean = lastGpsFix?.let { it.accuracyMeters.isFinite() && it.accuracyMeters in 0f..maxAccuracy && SystemClock.elapsedRealtime() - lastGpsElapsed in 0..15_000 && (locationProvider?.providerEnabled?.value == true || (phoneVisible && visibleGpsProvider?.providerEnabled?.value == true)) } == true
     private fun stopVisibleGps() {
         visibleGpsJob?.cancel(); visibleGpsJob = null

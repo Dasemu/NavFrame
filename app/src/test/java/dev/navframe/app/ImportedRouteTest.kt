@@ -157,4 +157,44 @@ class ImportedRouteTest {
         } finally { activityController.destroy(); serviceController.destroy() }
     }
 
+    @Test fun importedStartWaitsForGuidanceAccuracyEvenWhenMapReadinessStaysTrue() {
+        val activityController = Robolectric.buildActivity(PhoneWithoutGpu::class.java).create()
+        val serviceController = Robolectric.buildService(TftService::class.java).create()
+        val activity = activityController.get()
+        val service = serviceController.get()
+        service.mapRenderOverride = { _, _ -> TftFrame(encodedBytes = byteArrayOf(1), timestampMs = 0) }
+        try {
+            val application = RuntimeEnvironment.getApplication()
+            shadowOf(application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            field("service").set(activity, service)
+            val manager = application.getSystemService(LocationManager::class.java)
+            shadowOf(manager).setProviderEnabled(LocationManager.GPS_PROVIDER, true)
+            service.prepareImportedRoute(imported()); tick()
+            service.setPhoneVisible(true); tick()
+            fun fix(accuracy: Float) {
+                shadowOf(manager).simulateLocation(Location(LocationManager.GPS_PROVIDER).apply {
+                    latitude = 43.36; longitude = -5.85; this.accuracy = accuracy
+                    time = System.currentTimeMillis(); elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+                })
+                tick()
+            }
+            fix(80f)
+            assertTrue(service.gpsReady.value)
+            assertTrue(service.hasFreshGpsFix())
+            assertFalse(service.hasGuidanceGpsFix())
+            MainActivity::class.java.getDeclaredMethod("startImportedRoute").apply { isAccessible = true }.invoke(activity)
+            val pending = field("positionWait").get(activity) as kotlinx.coroutines.Job
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(600))
+            assertTrue(pending.isActive)
+            assertNull(shadowOf(activity).nextStartedService)
+            assertFalse(service.hasActiveGuidance())
+            fix(20f)
+            assertTrue(service.gpsReady.value)
+            assertTrue(service.hasGuidanceGpsFix())
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400))
+            assertTrue(pending.isCompleted)
+            assertEquals(TftService.ACTION_ROUTE_GPS, shadowOf(activity).nextStartedService.action)
+        } finally { activityController.destroy(); serviceController.destroy() }
+    }
+
 }

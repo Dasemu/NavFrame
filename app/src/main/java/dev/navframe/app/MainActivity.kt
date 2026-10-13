@@ -387,14 +387,17 @@ open class MainActivity : Activity() {
         val current = service ?: return
         if (!current.preparedRouteIsImported()) { hint.text = "Vuelve a cargar la ruta GPX"; return }
         positionWait?.cancel()
-        if (current.hasFreshGpsFix()) { perform(Action.ROUTE); return }
+        if (current.hasGuidanceGpsFix()) { perform(Action.ROUTE); return }
         current.setPhoneVisible(true)
         hint.text = "Esperando GPS preciso para iniciar el GPX…"
         routeLoading?.visibility = View.VISIBLE
         startButton?.isEnabled = false
         positionWait = scope.launch {
             try {
-                withTimeout(60_000) { current.gpsReady.first { it && current.hasFreshGpsFix() } }
+                withTimeout(60_000) {
+                    // Map readiness stays true while accuracy improves from 100 m to 25 m.
+                    while (!current.hasGuidanceGpsFix()) delay(200)
+                }
                 ensureActive()
                 if (current.preparedRouteIsImported()) perform(Action.ROUTE)
             } catch (_: TimeoutCancellationException) { hint.text = "Sin GPS preciso · activa ubicación y pulsa Iniciar navegación de nuevo" }
