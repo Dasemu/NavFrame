@@ -271,6 +271,22 @@ class RouteGuidanceTest {
             tracker.update(fix(lon = 0.012, time = 12), 20_000, 0).navigationStatus)
     }
 
+    @Test fun `closed imported trace rejoin at shared start and finish cannot falsely arrive`() {
+        val loop = importedTrace.copy(geometry = listOf(GeoPoint(0.0, 0.0), GeoPoint(0.0, 0.002),
+            GeoPoint(0.002, 0.002), GeoPoint(0.002, 0.0), GeoPoint(0.0, 0.0)))
+        val tracker = RouteGuidanceTracker(loop)
+        tracker.update(fix(lon = 0.0005), 0, 0)
+        for (i in 2L..4L) tracker.update(fix(lat = -0.0007, lon = 0.0005, time = i), (i - 1) * 3_000, 0)
+        for (i in 5L..9L) {
+            val state = tracker.update(fix(time = i), (i + 5) * 1_000, 0)
+            assertNotEquals(NavigationStatus.ARRIVED, state.navigationStatus)
+            if (i >= 7) {
+                assertEquals(NavigationStatus.NAVIGATING, state.navigationStatus)
+                assertTrue(state.remainingDistanceMeters!! > 800)
+            }
+        }
+    }
+
     @Test fun `imported crossing preserves progress until deviation is sustained`() {
         val crossing = importedTrace.copy(geometry = listOf(GeoPoint(0.0, 0.0), GeoPoint(0.0, 0.002),
             GeoPoint(0.002, 0.002), GeoPoint(0.002, 0.0), GeoPoint(0.0, 0.0), GeoPoint(0.0, -0.002)))
