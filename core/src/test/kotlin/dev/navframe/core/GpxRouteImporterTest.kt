@@ -36,9 +36,24 @@ class GpxRouteImporterTest {
     }
     @Test fun `rejects multiple candidates and disconnected segments`() {
         rejected("<gpx><rte>$points</rte><rte>$points</rte></gpx>", "varias")
-        rejected("<gpx><rte>$points</rte><trk/></gpx>", "varias")
+        rejected("<gpx><rte>$points</rte><trk/></gpx>")
+        rejected("<gpx><trk/><trk/></gpx>", "varias")
         val segment = "<trkseg>${points.replace("rtept", "trkpt")}</trkseg>"
         rejected("<gpx><trk>$segment$segment</trk></gpx>", "segmentos")
+    }
+    @Test fun `route stop list with a detailed track follows only the track in either order`() {
+        val stops = "<rte><name>Stops</name>$points</rte>"
+        val trace = "<trk><name>Detailed trace</name><trkseg><trkpt lat=\"43\" lon=\"-5\"/><trkpt lat=\"43.0005\" lon=\"-5.001\"/><trkpt lat=\"43.001\" lon=\"-5\"/></trkseg></trk>"
+        for (body in listOf(stops + trace, trace + stops)) {
+            val result = parse("<gpx>$body</gpx>")
+            assertEquals("Detailed trace", result.name)
+            assertEquals(3, result.route.geometry.size)
+            assertEquals(GeoPoint(43.0005, -5.001), result.route.geometry[1])
+        }
+    }
+    @Test fun `route and track share the point budget`() {
+        val stops = "<rte>" + "<rtept lat=\"1\" lon=\"1\"/>".repeat(GpxRouteImporter.MAX_POINTS) + "</rte>"
+        rejected("<gpx>$stops<trk><trkseg><trkpt lat=\"1\" lon=\"1\"/></trkseg></trk></gpx>", "10000")
     }
     @Test fun `rejects DTD internal and external entities`() {
         rejected("<!DOCTYPE gpx [<!ENTITY name 'expanded'>]><gpx><rte><name>&name;</name>$points</rte></gpx>")
