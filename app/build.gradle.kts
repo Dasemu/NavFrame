@@ -5,8 +5,8 @@ val hasReleaseSigning = releaseSigning.values.all { it.isNotBlank() }
 if (releaseSigning.values.any { it.isNotBlank() } && !hasReleaseSigning) {
     throw GradleException("Incomplete release signing configuration. Required variables: ${releaseSigningNames.joinToString()}")
 }
-val navframeVersionCode = providers.gradleProperty("navframeVersionCode").orElse("18").get().toInt()
-require(navframeVersionCode in 1..2_100_000_000) { "Android versionCode must be between 1 and 2100000000" }
+val navframeVersionCode = providers.gradleProperty("navframeVersionCode").orNull?.toInt()
+require(navframeVersionCode == null || navframeVersionCode in 1..2_100_000_000) { "Android versionCode must be between 1 and 2100000000" }
 android {
     namespace = "dev.navframe.app"
     compileSdk = 36
@@ -16,7 +16,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionName = "0.13.3"
-        versionCode = navframeVersionCode
+        versionCode = 19
     }
     if (hasReleaseSigning) {
         signingConfigs.create("production") {
@@ -30,6 +30,7 @@ android {
     testOptions { unitTests.isIncludeAndroidResources = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
 }
+navframeVersionCode?.let { android.defaultConfig.versionCode = it }
 gradle.taskGraph.whenReady {
     if (!hasReleaseSigning && allTasks.any { it.path in setOf(":app:assembleRelease", ":app:bundleRelease", ":app:packageRelease") }) {
         throw GradleException("Production builds require release signing. Configure ${releaseSigningNames.joinToString()}.")
