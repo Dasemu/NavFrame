@@ -149,9 +149,9 @@ open class MainActivity : Activity() {
         })
         guidance = label("", 20f); progress = label("", 14f); routeInfo = label("", 14f)
         permissionInfo = label("", 12f)
-        origin = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("GPS real", "DEMO · posición simulada")) }
+        origin = Spinner(this).apply { adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("Desde mi ubicación", "Simulación (sin GPS)")) }
         profileButton = button(profileLabel()) { chooseProfile() }
-        stopButton = button("STOP · Detener ruta") { positionWait?.cancel(); service?.stopRoute(); routeDialog?.dismiss(); hint.text = ""; stopButton.visibility = View.GONE }.apply { visibility = View.GONE; setTextColor(Color.WHITE); background = rounded(0xEEA83939.toInt(), 18) }
+        stopButton = button("Detener ruta") { positionWait?.cancel(); service?.stopRoute(); routeDialog?.dismiss(); hint.text = ""; stopButton.visibility = View.GONE }.apply { visibility = View.GONE; setTextColor(Color.WHITE); background = rounded(0xEEA83939.toInt(), 18) }
         root.addView(stopButton, FrameLayout.LayoutParams(-1, dp(56), android.view.Gravity.BOTTOM).apply { setMargins(dp(16), 0, dp(16), dp(28)) })
         root.addView(button("◎") { withPermissions(Action.POSITION) }.apply { contentDescription = "Centrar en mi posición y seguir el mapa"; background = rounded(0xFF50D5B6.toInt(), 28); setTextColor(0xFF0D191C.toInt()); elevation = dp(8).toFloat() }, FrameLayout.LayoutParams(dp(56), dp(56), android.view.Gravity.BOTTOM or android.view.Gravity.END).apply { setMargins(0, 0, dp(16), dp(104)) })
         positionNotice = label("", 13f).apply {
@@ -214,8 +214,8 @@ open class MainActivity : Activity() {
                     NavigationStatus.ARRIVED -> "Has llegado al destino"
                     NavigationStatus.ROUTE_PREVIEW -> "Vista previa de ruta"
                     NavigationStatus.IDLE -> "Listo para navegar"
-                    else -> state.nextManeuver?.instruction ?: if (state.route == null) "GPS listo · elige un destino" else if (state.route?.imported == true) "Sigue el trazado GPX · sin giros anunciados" else "Continúa por la ruta"
-                }.let { if (demo) "DEMO · $it" else it }
+                    else -> state.nextManeuver?.instruction ?: if (state.route == null) "GPS listo · elige un destino" else if (state.route?.let { it.imported && it.maneuvers.isEmpty() } == true) "Sigue el trazado GPX" else "Continúa por la ruta"
+                }.let { if (demo) "Simulación · $it" else it }
                 val next = state.distanceToNextManeuverMeters?.let { "$it m" } ?: ""
                 val remaining = state.remainingDistanceMeters?.let { "%.1f km restantes".format(java.util.Locale.ROOT, it / 1000.0) } ?: ""
                 val eta = state.etaEpochMillis?.let { "ETA " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.ROOT).format(java.util.Date(it)) } ?: ""
@@ -233,7 +233,7 @@ open class MainActivity : Activity() {
         if (needsLocation) required += Manifest.permission.ACCESS_FINE_LOCATION
         val missing = required.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
         val blocked = missing.any { permissionsPreferences.getBoolean(it, false) && !shouldShowRequestPermissionRationale(it) }
-        if (blocked) { AlertDialog.Builder(this).setTitle("Permiso necesario").setMessage("Activa ubicación precisa o dispositivos cercanos para esta función. Puedes seguir explorando mapas y usando la demo.").setPositiveButton("Abrir ajustes") { _, _ -> openAppSettings() }.setNegativeButton("Cancelar", null).show(); return }
+        if (blocked) { AlertDialog.Builder(this).setTitle("Permiso necesario").setMessage("Activa ubicación precisa o dispositivos cercanos para esta función. Puedes seguir explorando mapas y usando la simulación.").setPositiveButton("Abrir ajustes") { _, _ -> openAppSettings() }.setNegativeButton("Cancelar", null).show(); return }
         val request = missing.toMutableList()
         if (missing.contains(Manifest.permission.ACCESS_FINE_LOCATION)) request += Manifest.permission.ACCESS_COARSE_LOCATION
         if ((action == Action.CONNECT || action == Action.CHANGE_CONNECT || ((action == Action.ROUTE || action == Action.IMPORT_ROUTE) && service?.routeUsesGps() == true)) && Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED && !permissionsPreferences.getBoolean(Manifest.permission.POST_NOTIFICATIONS, false)) request += Manifest.permission.POST_NOTIFICATIONS
@@ -252,7 +252,7 @@ open class MainActivity : Activity() {
         refreshPermissions()
         val needsFine = action == Action.IMPORT_ROUTE || action == Action.POSITION || (action == Action.CALCULATE && origin.selectedItemPosition == 0) || (action == Action.ROUTE && service?.routeUsesGps() == true)
         val allowed = (!needsFine || checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) && ((action != Action.CONNECT && action != Action.CHANGE_CONNECT) || Build.VERSION.SDK_INT < 31 || checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED)
-        if (action != null && allowed) perform(action) else hint.text = "Permiso denegado · puedes usar la demo. Toca el aviso de permisos para abrir ajustes."
+        if (action != null && allowed) perform(action) else hint.text = "Permiso denegado · puedes usar la simulación o concederlo en los ajustes de la app."
     }
     private fun refreshPermissions() {
         if (!::permissionInfo.isInitialized) return
@@ -282,6 +282,7 @@ open class MainActivity : Activity() {
             Action.IMPORT_ROUTE -> startImportedRoute()
             Action.ROUTE, Action.PREVIEW -> {
                 if (action == Action.ROUTE && service?.hasPreparedRoute() != true) return
+                if (action == Action.ROUTE && service?.routeUsesGps() == true && service?.hasGuidanceGpsFix() != true) { startWhenGuidanceReady("Esperando GPS preciso para iniciar la ruta…") { perform(Action.ROUTE) }; return }
                 if (action == Action.ROUTE) startRequested = true
                 if (action == Action.PREVIEW) service?.previewPreparedRoute()
                 else if (service?.routeUsesGps() == true) try { startForegroundService(Intent(this, TftService::class.java).setAction(TftService.ACTION_ROUTE_GPS).putExtra(TftService.EXTRA_PREVIEW, action == Action.PREVIEW)) } catch (_: RuntimeException) { hint.text = "No se pudo iniciar · revisa permisos de ubicación" }
@@ -356,12 +357,11 @@ open class MainActivity : Activity() {
                 ensureActive()
                 val current = service ?: run { hint.text = "Servicio no disponible · vuelve a cargar el GPX"; return@launch }
                 cancelSearch(); routeDialog?.dismiss()
-                current.prepareImportedRoute(imported)
                 lastImportedRoute = imported
                 destination = null; destinationName = ""
-                hint.text = "Ruta GPX cargada"
+                hint.text = ""
                 showImportedRouteSheet(imported.name)
-                withPermissions(Action.IMPORT_ROUTE)
+                prepareImported(current, imported)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 // Parser messages contain no coordinates, file paths or document contents.
@@ -369,20 +369,24 @@ open class MainActivity : Activity() {
             }
         }
     }
+    /** Road-routes GPX stops first; navigation starts automatically once a route is ready. */
+    private fun prepareImported(current: TftService, imported: ImportedRoute) {
+        current.calculateImportedStops(imported) { if (lastImportedRoute === imported && routeDialog?.isShowing == true) withPermissions(Action.IMPORT_ROUTE) }
+    }
     private fun showImportedRouteSheet(name: String?) {
         routeDialog?.dismiss()
         (routeInfo.parent as? android.view.ViewGroup)?.removeView(routeInfo)
         val box = column().apply { setPadding(dp(20), dp(16), dp(20), dp(16)) }
         box.addView(label(name ?: "Ruta GPX", 20f))
         box.addView(routeInfo)
-        lastImportedRoute?.takeIf { !it.isTrack && it.route.geometry.size in 2..50 }?.let { imported ->
-            box.addView(button("Calcular por carreteras · evitar autopistas") {
-                service?.calculateImportedStops(imported)
-            })
-        }
         routeLoading = ProgressBar(this).apply { visibility = View.GONE }
         box.addView(routeLoading)
-        retryRouteButton = null
+        retryRouteButton = button("Reintentar") {
+            val current = service ?: return@button
+            // A GPS-wait timeout keeps the calculated route: only restart navigation.
+            if (current.hasPreparedRoute()) withPermissions(Action.IMPORT_ROUTE) else lastImportedRoute?.let { prepareImported(current, it) }
+        }.apply { visibility = View.GONE }
+        box.addView(retryRouteButton)
         startButton = button("Iniciar navegación") { withPermissions(Action.IMPORT_ROUTE) }
         box.addView(startButton)
         val dialog = AlertDialog.Builder(this).setView(box).setNegativeButton("Cerrar", null).create()
@@ -393,10 +397,24 @@ open class MainActivity : Activity() {
     private fun startImportedRoute() {
         val current = service ?: return
         if (!current.preparedRouteIsImported()) { hint.text = "Vuelve a cargar la ruta GPX"; return }
+        startWhenGuidanceReady("Esperando GPS preciso para iniciar el GPX…") {
+            if (!current.preparedRouteIsImported()) return@startWhenGuidanceReady
+            routeLoading?.visibility = View.VISIBLE
+            current.prepareImportedApproach { approached ->
+                routeLoading?.visibility = View.GONE
+                if (!approached) hint.text = "No se pudo calcular el camino hasta el inicio del GPX · dirígete al primer punto"
+                // The sheet may have been closed while the leg was calculated: then do not start.
+                if (routeDialog?.isShowing == true && current.preparedRouteIsImported()) perform(Action.ROUTE)
+            }
+        }
+    }
+    /** Coarse first fixes are common: wait for guidance accuracy instead of refusing to start. */
+    private fun startWhenGuidanceReady(message: String, start: () -> Unit) {
+        val current = service ?: return
         positionWait?.cancel()
-        if (current.hasGuidanceGpsFix()) { perform(Action.ROUTE); return }
+        if (current.hasGuidanceGpsFix()) { start(); return }
         current.setPhoneVisible(true)
-        hint.text = "Esperando GPS preciso para iniciar el GPX…"
+        hint.text = message
         routeLoading?.visibility = View.VISIBLE
         startButton?.isEnabled = false
         positionWait = scope.launch {
@@ -405,10 +423,13 @@ open class MainActivity : Activity() {
                     // Map readiness stays true while accuracy improves from 100 m to 25 m.
                     while (!current.hasGuidanceGpsFix()) delay(200)
                 }
-                ensureActive()
-                if (current.preparedRouteIsImported()) perform(Action.ROUTE)
-            } catch (_: TimeoutCancellationException) { hint.text = "Sin GPS preciso · activa ubicación y pulsa Iniciar navegación de nuevo" }
-            finally { routeLoading?.visibility = View.GONE; startButton?.isEnabled = current.hasPreparedRoute() }
+            } catch (_: TimeoutCancellationException) {
+                hint.text = "Sin GPS preciso · activa ubicación y pulsa Iniciar de nuevo"
+                return@launch
+            } finally { routeLoading?.visibility = View.GONE; startButton?.isEnabled = current.hasPreparedRoute() }
+            ensureActive()
+            hint.text = ""
+            start()
         }
     }
     private fun cancelSearch() { searchGeneration++; searchJob?.cancel(); searchJob = null }
@@ -620,6 +641,16 @@ open class MainActivity : Activity() {
             try { startActivity(Intent("com.android.settings.TTS_SETTINGS")) }
             catch (_: ActivityNotFoundException) { openAppSettings() }
         })
+        content.addView(label("Zoom del mapa en la pantalla de la moto", 14f))
+        val zoomLabel = label("", 13f)
+        fun showZoom(message: String = "") { zoomLabel.text = message.ifEmpty { if (current.tftZoomOffset == 0.0) "Automático según velocidad" else "Automático %+.1f".format(java.util.Locale("es", "ES"), current.tftZoomOffset) } }
+        content.addView(row().apply {
+            addView(button("−") { current.adjustTftZoom(-1); showZoom(current.tftZoomInfo.value.takeIf { it.endsWith("mínimo") }.orEmpty()) }.apply { contentDescription = "Alejar mapa TFT" }, LinearLayout.LayoutParams(0, dp(48), 1f))
+            addView(button("Auto") { current.adjustTftZoom(-(current.tftZoomOffset / TftCameraPolicy.ZOOM_STEP).toInt()); showZoom() }.apply { contentDescription = "Restablecer zoom TFT" }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { setMargins(dp(8), 0, dp(8), 0) })
+            addView(button("+") { current.adjustTftZoom(1); showZoom(current.tftZoomInfo.value.takeIf { it.endsWith("máximo") }.orEmpty()) }.apply { contentDescription = "Acercar mapa TFT" }, LinearLayout.LayoutParams(0, dp(48), 1f))
+        })
+        showZoom()
+        content.addView(zoomLabel)
         val routeEndpoint = entry("Servidor Valhalla HTTPS", current.routingEndpoint())
         val geocoderEndpoint = entry("Servidor búsqueda HTTPS", getSharedPreferences("geocoder", MODE_PRIVATE).getString("endpoint", NominatimGeocoder.DEFAULT_ENDPOINT) ?: NominatimGeocoder.DEFAULT_ENDPOINT)
         val catalogPreferences = getSharedPreferences("regional_downloads", MODE_PRIVATE)
@@ -685,7 +716,7 @@ open class MainActivity : Activity() {
         }.setNegativeButton("Cancelar", null).show()
     }
     private fun showInfo() {
-        val text = "NavFrame ${BuildConfig.VERSION_NAME} · mapas OpenStreetMap. Móvil y Yamaha comparten estado; el TFT se renderiza directamente a 480 × 240, sin captura de pantalla.\n\nDEMO es ficticia. GPS/ETA/guiado deben probarse en condiciones reales. Rutas y búsqueda necesitan conexión; los mapas y lugares incluidos de Asturias se consultan offline. Calcular rutas sigue necesitando Internet.\n\nNominatim recibe el texto de búsqueda, no tu GPS. No envíes información personal/confidencial. Prototipo con máximo 1 petición/s agregado y caché.\n\nNaviLite adaptado de Pillion · PolyForm Noncommercial 1.0.0\nRequired Notice: Copyright 2026 the Pillion authors\n\nFuente online predeterminada incluida: OpenFreeMap · © OpenMapTiles · © OpenStreetMap contributors.\n\nAsturias offline: datos © OpenStreetMap contributors, extracto Geofabrik 28/09/2026, licencia ODbL. Límites 42,9–43,75 N / 7,2–4,45 O; zoom 6–14. Tipografía Noto Sans, SIL OFL 1.1."
+        val text = "NavFrame ${BuildConfig.VERSION_NAME} · mapas OpenStreetMap. Móvil y Yamaha comparten estado; el TFT se renderiza directamente a 480 × 240, sin captura de pantalla.\n\nLa simulación usa posiciones ficticias. Calcular rutas y buscar direcciones necesita conexión; los mapas y lugares incluidos de Asturias funcionan sin conexión.\n\nNominatim recibe el texto de búsqueda, no tu GPS. No escribas información personal o confidencial. Las peticiones se limitan a 1 por segundo y se guardan en caché.\n\nNaviLite adaptado de Pillion · PolyForm Noncommercial 1.0.0\nRequired Notice: Copyright 2026 the Pillion authors\n\nFuente online predeterminada incluida: OpenFreeMap · © OpenMapTiles · © OpenStreetMap contributors.\n\nAsturias offline: datos © OpenStreetMap contributors, extracto Geofabrik 28/09/2026, licencia ODbL. Límites 42,9–43,75 N / 7,2–4,45 O; zoom 6–14. Tipografía Noto Sans, SIL OFL 1.1."
         val box = column().apply { setPadding(dp(16), 0, dp(16), 0); addView(label(text + "\n\nFuente activa: ${service?.mapSource()?.attribution ?: ConfiguredMapDataSource.DEFAULT_ATTRIBUTION}\nSi una fuente personalizada no declara atribución, corrige el estilo en Ajustes.", 14f)); addView(button("Diagnóstico del mapa TFT") { showMapDiagnostic() }) }
         AlertDialog.Builder(this).setTitle("Información y licencias").setView(ScrollView(this).apply { addView(box) }).setPositiveButton("Cerrar", null).setNeutralButton("Licencias") { _, _ -> showLicenses() }.setNegativeButton("Política búsqueda") { _, _ -> openUrl("https://operations.osmfoundation.org/policies/nominatim/") }.show()
     }
@@ -746,6 +777,7 @@ open class MainActivity : Activity() {
                                         check(selectMapSource(TileSource("asset://map/tft-style.json", ConfiguredMapDataSource.DEFAULT_ATTRIBUTION)))
                                         rebuildPhoneMap() // Release native readers before removing an active private archive.
                                     }
+                                    service?.releaseMapFallback()
                                     offlineManager.delete(pack.id)
                                     hint.text = "Paquete offline borrado"
                                 } catch (_: Exception) { hint.text = "No se pudo borrar el paquete" }
@@ -768,6 +800,7 @@ open class MainActivity : Activity() {
                                     check(selectMapSource(TileSource("asset://map/tft-style.json", ConfiguredMapDataSource.DEFAULT_ATTRIBUTION)))
                                     rebuildPhoneMap()
                                 }
+                                service?.releaseMapFallback()
                                 regionalManager.delete(region.folderId)
                                 displayedPlaces = emptyList(); phoneMap?.setPlaces(emptyList())
                                 hint.text = "Región borrada"

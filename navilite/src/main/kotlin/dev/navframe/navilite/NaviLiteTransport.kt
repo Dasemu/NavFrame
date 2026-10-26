@@ -28,8 +28,11 @@ import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** One selected bonded CCU, one outstanding JPEG; no screen capture. */
-class NaviLiteTransport(context: Context, private val deviceAddress: String) : TftTransport {
+/**
+ * One selected bonded CCU, one outstanding JPEG; no screen capture. [onRequest] receives
+ * dashboard-initiated services (for example handlebar zoom) on the I/O thread; keep it short.
+ */
+class NaviLiteTransport(context: Context, private val deviceAddress: String, private val onRequest: (service: Int, payloadSize: Int) -> Unit = { _, _ -> }) : TftTransport {
     private val context = context.applicationContext
     private val state = MutableStateFlow(ConnectionState.DISCONNECTED)
     override val connectionState: StateFlow<ConnectionState> = state.asStateFlow()
@@ -168,6 +171,11 @@ class NaviLiteTransport(context: Context, private val deviceAddress: String) : T
         while (true) {
             val packet = NaviLiteCodec.read(input)
             if (packet.service == service) return packet
+            if (packet.service == ZOOM_IN_REQUEST || packet.service == ZOOM_OUT_REQUEST) {
+                // Upstream documents MAP_ZOOM_LEVEL_UPDATE as the reply; the label is the setup value.
+                send(token, ZOOM_LEVEL_UPDATE, true, ZOOM_LABEL)
+            }
+            if (packet.service !in setOf(66, 80, 82, 83)) onRequest(packet.service, packet.payload.size)
         }
     }
 
@@ -180,7 +188,7 @@ class NaviLiteTransport(context: Context, private val deviceAddress: String) : T
             Triple(2, false, byteArrayOf(0, 0)), Triple(31, false, byteArrayOf(1, 0)),
             Triple(10, false, byteArrayOf(0, 0)), Triple(11, false, byteArrayOf(0, 0)),
             Triple(13, false, byteArrayOf(1, 0)), Triple(12, false, byteArrayOf(0, 0)),
-            Triple(14, true, byteArrayOf(7, 0x19, 6, 0, 0x30, 0x2e, 0x32, 0x20, 0x6d, 0x69)),
+            Triple(ZOOM_LEVEL_UPDATE, true, ZOOM_LABEL),
             Triple(3, true, byteArrayOf()), Triple(17, true, byteArrayOf(0, 0, 0, 0, 3, 0x6d, 0x70, 0x68)),
             Triple(13, false, byteArrayOf(1, 0)), Triple(12, false, byteArrayOf(1, 0)),
         )
@@ -191,5 +199,13 @@ class NaviLiteTransport(context: Context, private val deviceAddress: String) : T
         val closing = socket
         socket = null
         runCatching { closing?.close() }
+    }
+
+    companion object {
+        /** Pillion docs/PROTOCOL.md: APP_MAP_ZOOM_IN/OUT_REQUEST; direction unverified on hardware. */
+        const val ZOOM_IN_REQUEST = 51
+        const val ZOOM_OUT_REQUEST = 52
+        private const val ZOOM_LEVEL_UPDATE = 14
+        private val ZOOM_LABEL = byteArrayOf(7, 0x19, 6, 0, 0x30, 0x2e, 0x32, 0x20, 0x6d, 0x69)
     }
 }

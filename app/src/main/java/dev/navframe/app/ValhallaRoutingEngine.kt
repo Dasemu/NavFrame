@@ -13,13 +13,29 @@ import kotlin.coroutines.resumeWithException
 
 class RoutingHttpException(val status: Int, val retryAfterMs: Long) : IOException("Servidor de rutas: HTTP $status")
 
-/** Explicit prototype requests only. No automatic recalc, request retry or location history. */
+/** Explicit requests only. No automatic recalc, request retry or location history. */
 class ValhallaRoutingEngine(private val endpoint: String, private val clientId: String, private val language: () -> String = { "es-ES" }, private val openConnection: (String) -> HttpURLConnection = { URI(it).toURL().openConnection() as HttpURLConnection }) : RoutingEngine {
     init { validateEndpoint(endpoint) }
-    override suspend fun calculateRoute(origin: GeoPoint, destination: GeoPoint, options: RouteOptions): RouteResult {
-        validatePoint(origin); validatePoint(destination)
+    override suspend fun calculateRoute(origin: GeoPoint, destination: GeoPoint, options: RouteOptions): RouteResult =
+        calculateChunk(listOf(origin, destination), options)
+
+    /** Consecutive requests of at most [MAX_REQUEST_LOCATIONS] stops, sharing their boundary stop. */
+    override suspend fun calculateRouteThrough(stops: List<GeoPoint>, options: RouteOptions): RouteResult {
+        require(stops.size >= 2) { "Se necesitan al menos dos puntos" }
+        val parts = ArrayList<RouteResult>()
+        var start = 0
+        while (start < stops.lastIndex) {
+            val end = minOf(start + MAX_REQUEST_LOCATIONS - 1, stops.lastIndex)
+            parts += calculateChunk(stops.subList(start, end + 1), options)
+            start = end
+        }
+        return mergeRouteLegs(parts).copy(destination = stops.last())
+    }
+    private suspend fun calculateChunk(stops: List<GeoPoint>, options: RouteOptions): RouteResult {
+        stops.forEach(::validatePoint)
+        val destination = stops.last()
         val locale = GuidanceLanguage.resolve(language()).tag
-        val body = buildValhallaRequest(origin, destination, options, locale)
+        val body = buildValhallaRequest(stops, options, locale)
         val response = withTimeout(25_000) {
             rateGate.withLock {
                 val wait = 1_000 - (System.nanoTime() / 1_000_000 - lastRequestMs)
@@ -46,7 +62,7 @@ class ValhallaRoutingEngine(private val endpoint: String, private val clientId: 
                         http.connectTimeout = 10_000; http.readTimeout = 15_000
                         http.instanceFollowRedirects = false
                         http.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                        http.setRequestProperty("User-Agent", "NavFrame/0.5 (Android prototype)")
+                        http.setRequestProperty("User-Agent", "NavFrame/${BuildConfig.VERSION_NAME} (Android)")
                         http.setRequestProperty("X-Client-Id", clientId)
                         http.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                         val status = http.responseCode

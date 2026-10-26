@@ -8,7 +8,7 @@ Start the demo with **Start animated demo**. It supports TFT layout iteration an
 
 Drawing uses a logical 480 × 240 `Canvas`, prioritizing the maneuver, route shape, and position marker. `RenderScheduler` keeps only the latest state and avoids repaints for small changes: initial thresholds are 2 m position, 3° bearing, 0.5 m/s speed, and 10 m for visible distance changes. Initial maximum redraw rates are 1 FPS stopped, 5 FPS moving, and 10 FPS turning. These limit redraws; NaviLite keepalive sending is a separate configurable cadence (0.5/1/2 s) that waits for ACK and never queues frames. An ACK delay must not build a frame queue or block the demo.
 
-The accompanying camera policy keeps the marker near 72% screen height and changes simulated zoom by speed/turn distance: 17 below 30 km/h, 16 through 70 km/h, 15 above, and 17.5 within 150 m of a turn. In this phase the renderer draws an illustrative road directly on Canvas; it does not project tiles or a map. These parameters only support future map integration.
+In this phase the renderer draws an illustrative road directly on Canvas; it does not project tiles or a map. The camera policy used by the later map renderer is described under [TFT camera and zoom](#tft-camera-and-zoom).
 
 Check by starting the simulated demo and watching the preview for at least one minute. Position/bearing should change, frames should remain 480 × 240, and `DEMO` should remain visible. Stopping the demo should halt its animation and update source. This check does not test GPS or real navigation.
 
@@ -55,3 +55,14 @@ This phase has no turn-by-turn, active progress, live turns, off-route detection
 **Start guidance for calculated route** activates the GPS tracker or DEMO simulation over route geometry. The HUD shows icon, distance to maneuver, remaining distance, and approximate ETA. NO GPS, OFF ROUTE, and RECALCULATING hide stale estimates. Arrival requires distinct position observations. The service retains continuous transport and stop controls.
 
 Native composition is checked using `guidance.png` on a test base. This does not certify MapLibre GPU or physical navigation. See [testing](TESTING.md) and [thresholds and limitations](ROUTING.md).
+
+## TFT camera and zoom
+
+`TftCameraPolicy` places the rider at 78% of the frame height with a 45° pitch, so most of the 480 × 240 image shows the road ahead. Zoom depends on speed and on the next turn: 15.5 below 30 km/h or within 200 m of a turn, 15 up to 70 km/h, and 14.5 above. Earlier versions used zoom 15–17.5 with the rider at 60% and no pitch, which showed only a few hundred metres ahead.
+
+The rider can shift the automatic zoom in 0.5 steps between −2 and +2 from **☰ → Ajustes → Zoom del mapa en la pantalla de la moto**, or with the motorcycle's zoom controls when the TFT sends NaviLite zoom requests (see [NAVILITE.md](NAVILITE.md)). The offset is saved and the next frame is redrawn immediately. Pitch and handlebar zoom still need validation on the motorcycle.
+
+## Online map fallback
+
+A MapLibre snapshot fails as a whole if any tile, glyph or style resource fails, which happens with patchy mobile coverage. When the online map fails, NavFrame records `MAP_ONLINE_FAILED`, renders from an installed offline pack or region covering the position if there is one, and retries the online source after 30 seconds. Without an installed pack for the area, the TFT shows `MAPA NO DISPONIBLE` as before. Installing the bundled Asturias pack (or a regional pack) keeps the TFT map available when coverage drops.
+

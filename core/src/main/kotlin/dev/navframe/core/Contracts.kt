@@ -58,6 +58,12 @@ data class RouteOptions(
 interface RoutingEngine {
     suspend fun calculateRoute(origin: GeoPoint, destination: GeoPoint, options: RouteOptions): RouteResult
     suspend fun recalculateRoute(origin: GeoPoint, previousRoute: RouteResult, options: RouteOptions): RouteResult
+    /** Route along roads through ordered stops. The default joins independent legs. */
+    suspend fun calculateRouteThrough(stops: List<GeoPoint>, options: RouteOptions): RouteResult {
+        require(stops.size >= 2) { "At least two stops are required" }
+        return mergeRouteLegs(stops.zipWithNext().map { (from, to) -> calculateRoute(from, to, options) })
+            .copy(destination = stops.last())
+    }
 }
 data class SearchResult(
     val name: String,
