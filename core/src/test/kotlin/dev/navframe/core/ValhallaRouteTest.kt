@@ -189,4 +189,23 @@ class ValhallaRouteTest {
         // Independently snapped endpoints that do not coincide keep both points.
         assertEquals(6, mergeRouteLegs(listOf(part(a, b, c, true), part(GeoPoint(43.0201, -5.0), GeoPoint(43.025, -5.0), d, false))).geometry.size)
     }
+
+    @Test fun `imported routes get a road leg from a distant rider position`() {
+        val start = GeoPoint(43.0, -5.0)
+        val trace = RouteResult(listOf(start, GeoPoint(43.01, -5.0)), emptyList(), 1_100, 0, GeoPoint(43.01, -5.0), imported = true)
+        assertFalse(needsApproach(GeoPoint(43.0005, -5.0), trace)) // About 55 m away.
+        assertTrue(needsApproach(GeoPoint(42.99, -5.0), trace))
+        val approach = RouteResult(listOf(GeoPoint(42.99, -5.0), start), listOf(
+            Maneuver("start", 1_100, type = 1, beginShapeIndex = 0, endShapeIndex = 1),
+            Maneuver("arrive", 0, type = 4, beginShapeIndex = 1, endShapeIndex = 1),
+        ), 1_100, 90, start)
+        val merged = prependApproach(approach, trace)
+        assertEquals(3, merged.geometry.size)
+        assertTrue(merged.maneuvers.isEmpty()) // Still a trace to follow.
+        assertEquals(2_200, merged.distanceMeters)
+        assertTrue(merged.imported)
+        assertEquals(trace.destination, merged.destination)
+        assertEquals(0, merged.durationSeconds) // A trace never shows an ETA.
+    }
 }
+

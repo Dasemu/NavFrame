@@ -192,6 +192,15 @@ fun mergeRouteLegs(parts: List<RouteResult>): RouteResult {
         guidanceLanguage = parts.first().guidanceLanguage)
 }
 
+/**
+ * Prefix [route] with a road leg from the rider's position to its first point. A trace stays a
+ * trace: no turn instructions or ETA, the leg only extends the line to follow.
+ */
+fun prependApproach(approach: RouteResult, route: RouteResult): RouteResult {
+    val merged = mergeRouteLegs(listOf(approach, route))
+    return if (route.imported && route.maneuvers.isEmpty()) merged.copy(maneuvers = emptyList(), durationSeconds = 0) else merged
+}
+
 private fun validatePoint(point: GeoPoint) {
     if (!point.latitude.isFinite() || !point.longitude.isFinite() ||
         point.latitude !in -90.0..90.0 || point.longitude !in -180.0..180.0) invalid("Invalid routing coordinate")

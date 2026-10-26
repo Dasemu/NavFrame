@@ -275,6 +275,10 @@ private class RouteLine(private val route: RouteResult) {
 private fun validPoint(point: GeoPoint) = point.latitude.isFinite() && point.longitude.isFinite() &&
     point.latitude in -90.0..90.0 && point.longitude in -180.0..180.0
 private fun wrappedLongitude(value: Double): Double = ((value + 180) % 360 + 360) % 360 - 180
+/** Farther than this from an imported route's first point, a road leg to it is prepended on start. */
+const val IMPORTED_APPROACH_MIN_METERS = 150.0
+fun needsApproach(position: GeoPoint, route: RouteResult): Boolean =
+    route.geometry.isNotEmpty() && earthDistance(position, route.geometry.first()) > IMPORTED_APPROACH_MIN_METERS
 private fun earthDistance(a: GeoPoint, b: GeoPoint): Double {
     val lat1 = Math.toRadians(a.latitude); val lat2 = Math.toRadians(b.latitude)
     val dlat = lat2 - lat1; val dlon = Math.toRadians(wrappedLongitude(b.longitude - a.longitude))

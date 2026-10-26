@@ -36,7 +36,7 @@ class TftService : Service() {
     private var lastGpsElapsed = 0L
     private val mutableRouteInfo = MutableStateFlow("Sin ruta calculada")
     val routeInfo = mutableRouteInfo.asStateFlow()
-    private data class RoutePlan(val route: RouteResult, val origin: GeoPoint, val demo: Boolean, val options: RouteOptions = RouteOptions())
+    private data class RoutePlan(val route: RouteResult, val origin: GeoPoint, val demo: Boolean, val options: RouteOptions = RouteOptions(), val importedBase: RouteResult? = null)
     private var navigationJob: Job? = null
     private var locationProvider: AndroidLocationProvider? = null
     private var gpsRequested = false
@@ -625,6 +625,35 @@ class TftService : Service() {
                 if (generation == preparedGeneration)
                     mutableRouteInfo.value = if (error is RoutingHttpException && error.status == 429) "No se pudo calcular: servidor de rutas ocupado. Espera un minuto y pulsa Reintentar."
                         else "No se pudo calcular la ruta por carreteras. Comprueba la conexión a Internet y pulsa Reintentar."
+            }
+        }
+    }
+    /**
+     * Before starting an imported route away from its first point, prepend a road leg from the
+     * current position. [onReady] receives false when that leg could not be calculated.
+     */
+    fun prepareImportedApproach(onReady: (Boolean) -> Unit) {
+        val plan = routePlan?.takeIf { !preparedDestinationDirty && it.route.imported } ?: return onReady(true)
+        val base = plan.importedBase ?: plan.route
+        val position = lastGpsFix?.position?.takeIf { hasGuidanceGpsFix() } ?: return onReady(false)
+        if (!needsApproach(position, base)) { if (plan.importedBase != null) routePlan = plan.copy(route = base, origin = base.geometry.first(), importedBase = null); return onReady(true) }
+        val generation = preparedGeneration
+        mutableRouteInfo.value = "Calculando el camino hasta el inicio del GPX…"
+        routeJob?.cancel()
+        routeJob = scope.launch {
+            try {
+                val approach = routingEngineFactory(routingEndpoint()).calculateRoute(position, base.geometry.first(), RouteOptions(profile = RouteProfile.FASTEST, avoidUnpaved = true))
+                ensureActive()
+                if (generation != preparedGeneration || routePlan !== plan) return@launch
+                val route = prependApproach(approach, base)
+                RouteGuidanceTracker(route) // Validate before replacing the plan.
+                routePlan = plan.copy(route = route, origin = position, importedBase = base)
+                mutableRouteInfo.value = "Camino hasta el inicio del GPX calculado · %.1f km".format(java.util.Locale.ROOT, approach.distanceMeters / 1000.0)
+                onReady(true)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (generation == preparedGeneration && routePlan === plan) { routePlan = plan.copy(route = base, origin = base.geometry.first(), importedBase = null); mutableRouteInfo.value = "Sin camino hasta el inicio del GPX · dirígete al primer punto"; onReady(false) }
             }
         }
     }

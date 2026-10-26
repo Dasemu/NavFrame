@@ -282,6 +282,7 @@ open class MainActivity : Activity() {
             Action.IMPORT_ROUTE -> startImportedRoute()
             Action.ROUTE, Action.PREVIEW -> {
                 if (action == Action.ROUTE && service?.hasPreparedRoute() != true) return
+                if (action == Action.ROUTE && service?.routeUsesGps() == true && service?.hasGuidanceGpsFix() != true) { startWhenGuidanceReady("Esperando GPS preciso para iniciar la ruta…") { perform(Action.ROUTE) }; return }
                 if (action == Action.ROUTE) startRequested = true
                 if (action == Action.PREVIEW) service?.previewPreparedRoute()
                 else if (service?.routeUsesGps() == true) try { startForegroundService(Intent(this, TftService::class.java).setAction(TftService.ACTION_ROUTE_GPS).putExtra(TftService.EXTRA_PREVIEW, action == Action.PREVIEW)) } catch (_: RuntimeException) { hint.text = "No se pudo iniciar · revisa permisos de ubicación" }
@@ -396,10 +397,24 @@ open class MainActivity : Activity() {
     private fun startImportedRoute() {
         val current = service ?: return
         if (!current.preparedRouteIsImported()) { hint.text = "Vuelve a cargar la ruta GPX"; return }
+        startWhenGuidanceReady("Esperando GPS preciso para iniciar el GPX…") {
+            if (!current.preparedRouteIsImported()) return@startWhenGuidanceReady
+            routeLoading?.visibility = View.VISIBLE
+            current.prepareImportedApproach { approached ->
+                routeLoading?.visibility = View.GONE
+                if (!approached) hint.text = "No se pudo calcular el camino hasta el inicio del GPX · dirígete al primer punto"
+                // The sheet may have been closed while the leg was calculated: then do not start.
+                if (routeDialog?.isShowing == true && current.preparedRouteIsImported()) perform(Action.ROUTE)
+            }
+        }
+    }
+    /** Coarse first fixes are common: wait for guidance accuracy instead of refusing to start. */
+    private fun startWhenGuidanceReady(message: String, start: () -> Unit) {
+        val current = service ?: return
         positionWait?.cancel()
-        if (current.hasGuidanceGpsFix()) { perform(Action.ROUTE); return }
+        if (current.hasGuidanceGpsFix()) { start(); return }
         current.setPhoneVisible(true)
-        hint.text = "Esperando GPS preciso para iniciar el GPX…"
+        hint.text = message
         routeLoading?.visibility = View.VISIBLE
         startButton?.isEnabled = false
         positionWait = scope.launch {
@@ -408,10 +423,13 @@ open class MainActivity : Activity() {
                     // Map readiness stays true while accuracy improves from 100 m to 25 m.
                     while (!current.hasGuidanceGpsFix()) delay(200)
                 }
-                ensureActive()
-                if (current.preparedRouteIsImported()) perform(Action.ROUTE)
-            } catch (_: TimeoutCancellationException) { hint.text = "Sin GPS preciso · activa ubicación y pulsa Iniciar navegación de nuevo" }
-            finally { routeLoading?.visibility = View.GONE; startButton?.isEnabled = current.hasPreparedRoute() }
+            } catch (_: TimeoutCancellationException) {
+                hint.text = "Sin GPS preciso · activa ubicación y pulsa Iniciar de nuevo"
+                return@launch
+            } finally { routeLoading?.visibility = View.GONE; startButton?.isEnabled = current.hasPreparedRoute() }
+            ensureActive()
+            hint.text = ""
+            start()
         }
     }
     private fun cancelSearch() { searchGeneration++; searchJob?.cancel(); searchJob = null }

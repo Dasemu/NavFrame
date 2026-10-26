@@ -2,7 +2,7 @@
 
 Open **☰ → Cargar ruta GPX**, then choose a `.gpx` file using Android's document picker. The app displays the name and distance and previews the route when no other navigation session is active. Files made of route points, waypoints or sparse tracks are first joined along roads (see below). After a valid file is selected and any road calculation succeeds, navigation starts automatically with real GPS as soon as location permission and a recent accurate fix are available. No destination search is needed. A pending import leaves existing navigation running until the new trace can start. The **Iniciar navegación** button retries after a timeout or permission denial.
 
-Precise location permission is required to start navigation. If a recent fix with accuracy of 25 metres or better is unavailable, the app waits up to 60 seconds. Close the import panel or stop the route to cancel that wait. When the wait expires, enable location and tap **Iniciar navegación** to retry. Denying permission leaves the trace available for review.
+Precise location permission is required to start navigation. If a recent fix with accuracy of 25 metres or better is unavailable, the app waits up to 60 seconds (searched destinations wait the same way instead of refusing to start). Close the import panel or stop the route to cancel that wait. When the wait expires, enable location and tap **Iniciar navegación** to retry. Denying permission leaves the trace available for review.
 
 ## Supported files
 
@@ -16,9 +16,13 @@ Route points (`rtept`), waypoints and sparse tracks (median gap between points a
 
 The result has real turn instructions, voice announcements and an ETA. It is not recalculated automatically during navigation so that the planned points are respected. If the calculation fails (no connection, server busy), the panel says so and offers **Reintentar**; the app never falls back to straight lines. Dense recorded tracks are followed as they are, without contacting the routing server.
 
+## Starting away from the first point
+
+On start, if the rider is more than 150 m from the route's first point, the app calculates a road leg from the current position to that point (fastest motorcycle route, avoiding unpaved roads) and prepends it, so guidance begins where the rider actually is. A dense trace stays a trace: the leg extends the line to follow, without turn instructions or ETA. The leg is not recalculated if you leave it. If the leg cannot be calculated, navigation starts on the imported route alone and the app asks the rider to head to the first point. Pressing start again later recalculates the leg from the new position.
+
 ## Following a trace
 
-Dense tracks keep their original coordinates in memory and are drawn on the phone and TFT. Following such a trace does not send the file or its coordinates to a routing server. It works with the installed offline map; online background tiles still require a connection when no offline map is selected. Standard trace points do not establish legal roads, surface quality, reliable turns or travel time.
+Dense tracks keep their original coordinates in memory and are drawn on the phone and TFT. Following such a trace sends no GPX coordinates to a routing server; only the optional leg from your position to its first point is calculated online. It works with the installed offline map; online background tiles still require a connection when no offline map is selected. Standard trace points do not establish legal roads, surface quality, reliable turns or travel time.
 
 The display says **Sigue el trazado GPX**. It shows progress, remaining distance, sustained deviations and arrival using the existing GPS guidance policy. It does not invent turn instructions, speak turn announcements, show an ETA, or automatically reroute away from the imported trace. On a deviation, return to the trace using the map and road signs. Manual recalculation also preserves the trace. After a confirmed deviation, three fresh, stable GPS fixes spanning at least two seconds automatically resume progress at the nearest point of the original trace, whether you rejoin ahead of or behind the previous position. GPS jumps and inaccurate fixes cannot confirm a rejoin.
 
