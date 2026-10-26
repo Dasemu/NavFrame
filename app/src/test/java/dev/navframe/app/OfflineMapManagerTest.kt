@@ -85,6 +85,43 @@ class OfflineMapManagerTest {
         assertTrue(glyph.size > 1_000)
     }
 
+    @Test fun everyGlyphRangeIsBundledSoSnapshotsNeverAbortOnAMissingRange() {
+        // MapSnapshotter fails the whole TFT frame on any glyph load error, e.g. Asturian "Ḷḷ" or "’".
+        val folder = "offline/fonts/Noto Sans Regular"
+        for (start in 0 until 65_536 step 256) {
+            val range = "$start-${start + 255}"
+            val ids = glyphIds(context.assets.open("$folder/$range.pbf").use { it.readBytes() })
+            assertTrue(range, ids.all { it in start..start + 255 })
+        }
+        val latinExtended = glyphIds(context.assets.open("$folder/7680-7935.pbf").use { it.readBytes() })
+        val punctuation = glyphIds(context.assets.open("$folder/8192-8447.pbf").use { it.readBytes() })
+        assertTrue(latinExtended.containsAll(listOf(0x1E36, 0x1E37)))
+        assertTrue(punctuation.containsAll(listOf(0x2013, 0x2014, 0x2018, 0x2019)))
+    }
+
+    /** Reads glyph IDs from a MapLibre glyph PBF: glyphs.stacks(1) → fontstack.glyphs(3) → glyph.id(1). */
+    private fun glyphIds(bytes: ByteArray): List<Int> {
+        assertTrue(bytes.isNotEmpty())
+        var index = 0
+        fun varint(): Int { var result = 0; var shift = 0; while (true) { val b = bytes[index++].toInt(); result = result or ((b and 0x7f) shl shift); if (b >= 0) return result; shift += 7 } }
+        /** Visits fields until [end]; [visit] receives the field number, wire type and the value or field end. */
+        fun fields(end: Int, visit: (Int, Int, Int) -> Unit) {
+            while (index < end) {
+                val key = varint()
+                when (key and 7) {
+                    0 -> visit(key ushr 3, 0, varint())
+                    2 -> { val stop = varint() + index; visit(key ushr 3, 2, stop); index = stop }
+                    else -> fail("Unexpected wire type")
+                }
+            }
+        }
+        val ids = mutableListOf<Int>()
+        fields(bytes.size) { stackField, _, stackEnd -> if (stackField == 1) fields(stackEnd) { glyphField, _, glyphEnd ->
+            if (glyphField == 3) fields(glyphEnd) { field, wire, value -> if (field == 1 && wire == 0) ids += value }
+        } }
+        return ids
+    }
+
     @Test fun otherBoundedRegionsAreImportedFromHeaderRatherThanAsturiasPlaceholder() = runBlocking {
         val bounds = OfflineBounds(42.0, -3.0, 42.5, -2.5)
         val pack = OfflineMapManager(context).importArchive(ByteArrayInputStream(archive(bounds)), "Other region")

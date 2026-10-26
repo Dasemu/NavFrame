@@ -1,5 +1,5 @@
 import unittest
-from scripts.check_version_policy import validate
+from scripts.check_version_policy import apply_version, parse_version, validate
 
 
 class VersionPolicyTest(unittest.TestCase):
@@ -29,6 +29,19 @@ class VersionPolicyTest(unittest.TestCase):
         validate('main', 'hotfix/major', (0, 13, 4), (1, 13, 4), 20, 21, True)
         with self.assertRaises(ValueError):
             validate('main', 'feat/major', (0, 13, 4), (1, 13, 4), 20, 21, True)
+
+    def test_promotion_keeps_destination_patch(self):
+        validate('main', 'development', (0, 13, 6), (0, 14, 6), 22, 24)
+        with self.assertRaises(ValueError):
+            validate('main', 'development', (0, 13, 6), (0, 13, 7), 22, 23)
+
+    def test_apply_version_rewrites_gradle_and_readme(self):
+        gradle = '    defaultConfig {\n        versionName = "0.13.7"\n        versionCode = 23\n    }\n'
+        readme = 'The current checkout is version 0.13.7. The 0.13 series adds voices.\n'
+        gradle, readme = apply_version(gradle, readme, (0, 14, 6), 24)
+        self.assertEqual(parse_version(gradle), ((0, 14, 6), 24))
+        self.assertIn('        versionCode = 24\n', gradle)
+        self.assertEqual(readme, 'The current checkout is version 0.14.6. The 0.13 series adds voices.\n')
 
 
 if __name__ == '__main__':

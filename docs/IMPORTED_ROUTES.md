@@ -6,9 +6,9 @@ Precise location permission is required to start navigation. If a recent fix wit
 
 ## Supported files
 
-GPX 1.0 and 1.1 routes (`rte/rtept`) and tracks (`trk/trkseg/trkpt`) are supported, including GPX files without a namespace. Export exactly one route or one track containing a single nonempty continuous segment. Multiple routes, tracks or nonempty segments are rejected: the app must not create a fictitious connection between separate tracks. Waypoints alone do not define a route.
+GPX 1.0 and 1.1 routes (`rte/rtept`) and tracks (`trk/trkseg/trkpt`) are supported, including GPX files without a namespace. Export one route or one track containing a single nonempty continuous segment. A file containing one route plus one track is also supported: the track supplies the detailed geometry and its name; route stops are not connected or added to the trace. An empty or invalid track is rejected rather than silently following the route stops. Multiple routes, multiple tracks or multiple nonempty segments are rejected: the app must not create a fictitious connection between separate tracks. Waypoints alone do not define a route.
 
-Files are limited to 5 MiB, 10,000 trace points and 64 XML nesting levels. Coordinates must be finite and within latitude/longitude bounds, with at least two distinct points. DTD declarations and external entities are rejected. Route names are capped at 256 characters. An invalid or inaccessible file leaves any running navigation untouched.
+Files are limited to 5 MiB, 10,000 total route and track points and 64 XML nesting levels. Coordinates must be finite and within latitude/longitude bounds, with at least two distinct points. DTD declarations and external entities are rejected. Route names are capped at 256 characters. An invalid or inaccessible file leaves any running navigation untouched.
 
 ## Following a trace
 

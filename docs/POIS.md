@@ -26,7 +26,7 @@ Relevant inactive markers are excluded (`disused`/`abandoned` and prefixes for s
 
 ## Contract and SQLite
 
-The original core `OfflinePlace` retains ID, name, `PlaceCategory`, position, optional address/openingHours/website/phone, and optional straight-line distance. `normalizePlaceSearch` uses NFD, removes combining marks, lowercases independently of locale, compacts whitespace/control/format characters, and preserves non-Latin alphabets. Python generates `search_name` with the same algorithm. Map glyphs remain limited to Unicode 0–2047; native list text does not depend on these PBF glyphs.
+The original core `OfflinePlace` retains ID, name, `PlaceCategory`, position, optional address/openingHours/website/phone, and optional straight-line distance. `normalizePlaceSearch` uses NFD, removes combining marks, lowercases independently of locale, compacts whitespace/control/format characters, and preserves non-Latin alphabets. Python generates `search_name` with the same algorithm. Map glyphs remain limited to Unicode 0–2047, 7680–7935 and 8192–8447; native list text does not depend on these PBF glyphs.
 
 Schema: `places(id TEXT PRIMARY KEY, name TEXT, search_name TEXT, category TEXT, latitude REAL, longitude REAL, address TEXT, opening_hours TEXT, website TEXT, phone TEXT)`. Name/search/category/position are required and categories are checked. Indexes: `(category,latitude,longitude)`, `(latitude,longitude)`, `search_name`. `metadata(key TEXT PRIMARY KEY,value TEXT)` identifies version/coverage. Android queries are parameterized and escape `%`, `_`, and backslash via `escapePlaceLike` with `ESCAPE '\'`; an apostrophe remains data. Bounded substring search does not make the name index a full-text-search guarantee for millions of places.
 

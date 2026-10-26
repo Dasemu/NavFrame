@@ -26,7 +26,7 @@ internal fun mapErrorDetail(message: String?, errorClass: String = "SDK_CALLBACK
     val reason = when {
         text.contains("dns") || text.contains("resolve") -> MapFailureReason.DNS
         status == 403 || text.contains("forbidden") -> MapFailureReason.FORBIDDEN
-        status == 404 || text.contains("not found") -> MapFailureReason.NOT_FOUND
+        status == 404 || text.contains("not found") || text.contains("could not read asset") -> MapFailureReason.NOT_FOUND
         text.contains("context lost") -> MapFailureReason.CONTEXT_LOST
         text.contains("egl") -> MapFailureReason.EGL
         text.contains("memory") -> MapFailureReason.MEMORY
@@ -54,7 +54,7 @@ internal fun classifyMapRenderFailure(message: String?): MapRenderFailure {
 /** Preserve only known diagnostic vocabulary, never arbitrary SDK text or identifiers. */
 internal fun safeSdkEvidence(message: String?): String {
     if (message.isNullOrBlank()) return "EMPTY"
-    val allowed = setOf("failed", "failure", "error", "exception", "load", "loading", "loaded", "style", "map", "snapshot", "snapshotter", "render", "rendering", "fully", "tile", "tiles", "data", "no", "not", "missing", "empty", "invalid", "corrupt", "unsupported", "resource", "request", "cancelled", "canceled", "cancel", "timeout", "timed", "out", "file", "archive", "pmtiles", "read", "write", "open", "permission", "denied", "such", "directory", "end", "unexpected", "parse", "parsing", "json", "geojson", "glyph", "glyphs", "font", "sprite", "image", "bitmap", "memory", "allocation", "context", "lost", "egl", "opengl", "framebuffer", "shader", "gpu", "network", "connection", "socket", "resolve", "dns", "http", "status", "code", "server", "returned", "forbidden", "found", "active", "already", "started", "finished", "destroyed", "source", "sources", "size", "dimensions", "download", "unable", "cannot", "could", "compression", "compressed", "gzip", "zstd", "protobuf", "decode", "decoding", "truncated", "eof", "i", "o", "to", "of", "is", "been", "has", "was", "be", "gl", "graphics", "canvas", "layer", "supported")
+    val allowed = setOf("failed", "failure", "error", "exception", "load", "loading", "loaded", "style", "map", "snapshot", "snapshotter", "render", "rendering", "fully", "tile", "tiles", "data", "no", "not", "missing", "empty", "invalid", "corrupt", "unsupported", "resource", "request", "cancelled", "canceled", "cancel", "timeout", "timed", "out", "file", "archive", "pmtiles", "read", "write", "open", "permission", "denied", "such", "directory", "end", "unexpected", "parse", "parsing", "json", "geojson", "glyph", "glyphs", "font", "sprite", "image", "bitmap", "memory", "allocation", "context", "lost", "egl", "opengl", "framebuffer", "shader", "gpu", "network", "connection", "socket", "resolve", "dns", "http", "status", "code", "server", "returned", "forbidden", "found", "active", "already", "started", "finished", "destroyed", "source", "sources", "asset", "assets", "size", "dimensions", "download", "unable", "cannot", "could", "compression", "compressed", "gzip", "zstd", "protobuf", "decode", "decoding", "truncated", "eof", "i", "o", "to", "of", "is", "been", "has", "was", "be", "gl", "graphics", "canvas", "layer", "supported")
     // Strip entire URLs, paths and quoted payloads before vocabulary extraction.
     val stripped = message.lowercase(java.util.Locale.ROOT)
         .replace(Regex("""[a-z][a-z0-9+.-]*://\S+"""), " ")

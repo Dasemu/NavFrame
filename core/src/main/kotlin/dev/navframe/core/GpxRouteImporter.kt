@@ -56,11 +56,16 @@ object GpxRouteImporter {
     }
 
     private class Handler : DefaultHandler2() {
-        val points = mutableListOf<GeoPoint>()
-        var name: String? = null
+        private val routePoints = mutableListOf<GeoPoint>()
+        private val trackPoints = mutableListOf<GeoPoint>()
+        private var routeName: String? = null
+        private var trackName: String? = null
+        val points: List<GeoPoint> get() = if (tracks > 0) trackPoints else routePoints
+        val name: String? get() = if (tracks > 0) trackName else routeName
         private val path = mutableListOf<String>()
         private var rootNamespace = ""
-        private var candidates = 0
+        private var routes = 0
+        private var tracks = 0
         private var nonemptySegments = 0
         private var segmentPoints = 0
         private var nameText: StringBuilder? = null
@@ -77,18 +82,20 @@ object GpxRouteImporter {
             val route = path == listOf("gpx", "rte")
             val track = path == listOf("gpx", "trk")
             if (route || track) {
-                candidates++
-                if (candidates > 1) fail("El GPX contiene varias rutas o tracks. Exporta solo la ruta que quieras seguir.")
+                if (route) routes++ else tracks++
+                if (routes > 1 || tracks > 1) fail("El GPX contiene varias rutas o tracks. Exporta solo la ruta que quieras seguir.")
             }
             if (path == listOf("gpx", "trk", "trkseg")) segmentPoints = 0
             if (path == listOf("gpx", "rte", "name") || path == listOf("gpx", "trk", "name")) nameText = StringBuilder()
             if (path == listOf("gpx", "rte", "rtept") || path == listOf("gpx", "trk", "trkseg", "trkpt")) {
-                if (points.size >= MAX_POINTS) fail("El GPX supera los 10000 puntos. Simplifica la ruta antes de importarla.")
+                if (routePoints.size + trackPoints.size >= MAX_POINTS) fail("El GPX supera los 10000 puntos. Simplifica la ruta antes de importarla.")
                 val lat = attributes.getValue("lat")?.toDoubleOrNull()
                 val lon = attributes.getValue("lon")?.toDoubleOrNull()
                 if (lat == null || lon == null || !lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0) fail("El GPX contiene coordenadas inválidas.")
-                points.add(GeoPoint(lat, lon))
-                if (path[1] == "trk") segmentPoints++
+                if (path[1] == "trk") {
+                    trackPoints.add(GeoPoint(lat, lon))
+                    segmentPoints++
+                } else routePoints.add(GeoPoint(lat, lon))
             }
         }
         override fun characters(ch: CharArray, start: Int, length: Int) {
@@ -97,7 +104,10 @@ object GpxRouteImporter {
             }
         }
         override fun endElement(uri: String, localName: String, qName: String) {
-            if (path == listOf("gpx", "rte", "name") || path == listOf("gpx", "trk", "name")) { name = nameText?.toString(); nameText = null }
+            if (path == listOf("gpx", "rte", "name") || path == listOf("gpx", "trk", "name")) {
+                if (path[1] == "trk") trackName = nameText?.toString() else routeName = nameText?.toString()
+                nameText = null
+            }
             if (path == listOf("gpx", "trk", "trkseg") && segmentPoints > 0) {
                 nonemptySegments++
                 if (nonemptySegments > 1) fail("El GPX contiene varios segmentos separados. Exporta un solo segmento continuo.")
