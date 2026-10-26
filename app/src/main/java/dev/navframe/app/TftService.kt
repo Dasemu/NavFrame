@@ -586,6 +586,47 @@ class TftService : Service() {
         mutableRouteInfo.value = "GPX · %.1f km · %d puntos\nSigue el trazado: sin instrucciones de giro, ETA ni recálculo automático. Revisa el recorrido antes de iniciar.".format(java.util.Locale.ROOT, imported.route.distanceMeters / 1000.0, imported.route.geometry.size)
         if (!hasActiveGuidance()) showPreparedPreview()
     }
+    /** Resolve GPX route stops against Valhalla; never alter a detailed imported track. */
+    fun calculateImportedStops(imported: ImportedRoute) {
+        if (imported.isTrack || imported.route.geometry.size !in 2..50) {
+            mutableRouteInfo.value = "Solo se pueden calcular rutas GPX con entre 2 y 50 puntos de paso."
+            return
+        }
+        val stops = imported.route.geometry
+        val generation = preparedGeneration
+        val options = RouteOptions(profile = RouteProfile.AVOID_MOTORWAYS, avoidMotorways = true, avoidUnpaved = true)
+        mutableRouteInfo.value = "Calculando sobre carreteras · evitando autopistas y pistas sin asfaltar…"
+        routeJob?.cancel()
+        routeJob = scope.launch {
+            try {
+                val engine = routingEngineFactory(routingEndpoint())
+                val geometry = mutableListOf<GeoPoint>()
+                var metres = 0L
+                for (i in 0 until stops.lastIndex) {
+                    val part = engine.calculateRoute(stops[i], stops[i + 1], options)
+                    ensureActive()
+                    if (part.geometry.size < 2) throw java.io.IOException("Segmento sin geometría")
+                    geometry.addAll(if (i == 0) part.geometry else part.geometry.drop(1))
+                    metres += part.distanceMeters
+                    if (geometry.size > 10_000) throw IllegalArgumentException("La ruta supera 10000 puntos")
+                    if (generation != preparedGeneration) return@launch
+                    mutableRouteInfo.value = "Calculando carreteras · tramo ${i + 1}/${stops.lastIndex}"
+                }
+                ensureActive()
+                if (generation != preparedGeneration) return@launch
+                val result = RouteResult(geometry = geometry, maneuvers = emptyList(),
+                    distanceMeters = metres.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                    durationSeconds = 0, destination = geometry.last(), imported = true)
+                prepareImportedRoute(ImportedRoute(imported.name, result, isTrack = true))
+                mutableRouteInfo.value = "GPX ajustado a carreteras · %.1f km · %d puntos\\nComprueba que no haya autovías ni tramos inadecuados antes de salir. No hay avisos de giro ni recálculo.".format(java.util.Locale.ROOT, metres / 1000.0, geometry.size)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (generation == preparedGeneration)
+                    mutableRouteInfo.value = "No se pudo calcular sobre carreteras. Se conserva el GPX original; comprueba conexión y endpoint Valhalla."
+            }
+        }
+    }
     fun preparedRouteIsImported() = hasPreparedRoute() && routePlan?.route?.imported == true
     fun hasPreparedRoute() = !preparedDestinationDirty && routePlan != null
     fun routeUsesGps() = !preparedDestinationDirty && routePlan?.demo == false
