@@ -22,7 +22,7 @@ Each generated package preserves OSM attribution and ODbL provenance. Geofabrik 
 
 Maps and installed places can be viewed without a network connection. Search for local places does not query Nominatim. Address search and route calculation need the configured online services. Following a previously calculated route can continue from its saved geometry, but route calculation and recalculation still need a network connection.
 
-Map detail is bounded by package coverage and maximum zoom. POI data can be absent or outdated. Glyph coverage is limited to the bundled font ranges, so some writing systems or characters may not render. OSM data does not certify business status, road access, motorcycle suitability, speed limits, or camera completeness.
+Map detail is bounded by package coverage and maximum zoom. POI data can be absent or outdated. Glyph coverage is limited to the bundled font ranges, so some writing systems or characters may not render. Every other Unicode range ships as an empty placeholder: uncovered characters are omitted from a label instead of failing the TFT snapshot. Keep placeholders for all 256 ranges when changing fonts (`tools/offline/fill-glyph-ranges.py`). OSM data does not certify business status, road access, motorcycle suitability, speed limits, or camera completeness.
 
 The owner confirmed that the bundled Asturias map works offline on a Xiaomi 11 Lite 5G NE running Android 14. On 2026-10-12, the owner reported about 20 minutes of working TFT map display followed by persistent `Mapa no disponible` while the phone map continued working, with an offline map installed. This confirms some successful TFT rendering, but not sustained reliability or the exact source selected by the TFT at failure. See [Testing](TESTING.md).
 

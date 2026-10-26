@@ -31,6 +31,10 @@ class MapRenderDiagnosticsTest {
         assertFalse(detail.safeText().contains("secret"))
         assertFalse(detail.safeText().contains("43.361234"))
     }
+    @Test fun missingBundledAssetIsReportedAsNotFound() {
+        // MapLibre's AssetManagerFileSource message for an absent glyph range or other asset.
+        assertEquals("UNKNOWN/NOT_FOUND/SDK_CALLBACK", mapErrorDetail("Could not read asset").safeText())
+    }
     @Test fun timeoutHasSeparateStageAndDoesNotPretendThatTheNetworkFailed() {
         val failure = MapRenderException(MapRenderFailure.TIMEOUT, MapRenderStage.STYLE_READY)
         assertEquals("TIMEOUT:STYLE_READY:UNKNOWN/UNKNOWN/SDK_CALLBACK", failure.message)

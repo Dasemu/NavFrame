@@ -4,7 +4,7 @@ Initial proposal dated 2026-09-29, updated 2026-09-30. NavFrame 0.10 introduced 
 
 ## Current data
 
-Asturias has a 34,617,483-byte PMTiles map containing roads, places/towns, inland water, land cover, and buildings at zoom 6–14, plus an SQLite catalog of 11,457 POIs. Cantabria is a separate `.navframe` map/POI package. Both retain separate source extracts and hashes. Maps are selected as individual regional sources; place search combines installed catalogs using the chosen location's coverage. The APK includes Noto Sans Regular glyphs for Unicode 0–2047. Current app limits are 1 GiB total, 600 MiB per compressed regional package, and up to twelve installed versions. These are prototype limits, not demonstrated capacity for all regions.
+Asturias has a 34,617,483-byte PMTiles map containing roads, places/towns, inland water, land cover, and buildings at zoom 6–14, plus an SQLite catalog of 11,457 POIs. Cantabria is a separate `.navframe` map/POI package. Both retain separate source extracts and hashes. Maps are selected as individual regional sources; place search combines installed catalogs using the chosen location's coverage. The APK includes Noto Sans Regular glyphs for Unicode 0–2047, 7680–7935 and 8192–8447; every other range is an empty placeholder so a missing character cannot abort a TFT snapshot. Current app limits are 1 GiB total, 600 MiB per compressed regional package, and up to twelve installed versions. These are prototype limits, not demonstrated capacity for all regions.
 
 ## Offline places for Asturias
 
@@ -49,7 +49,7 @@ Each manifest should contain stable region ID, label, coverage polygon/bounds, p
 
 Select by **actual coverage**, not only rectangles: countries/subregions have irregular boundaries, islands, and overlap. Before a trip, install regions intersecting the route with edge overlap. Do not present a bbox as continuous coverage. A multi-region renderer must mount the required sources and avoid duplicate features; SQLite search combines indexes and deduplicates by OSM identity. The current map selector still selects an individual regional map, so combining adjacent regions requires new work.
 
-For European/global use, add shared, versioned glyph coverage by writing system. Latin/Greek/Cyrillic are broadly covered by current ranges, but Georgian and many other business-name characters are not. Do not promise full names with glyphs 0–2047. New packages should declare needed ranges; generate/distribute font derivatives under their OFL terms without hidden remote font fetches.
+For European/global use, add shared, versioned glyph coverage by writing system. Latin/Greek/Cyrillic are broadly covered by current ranges, but Georgian and many other business-name characters are not. Do not promise full names with the bundled ranges; placeholder ranges omit uncovered characters. New packages should declare needed ranges; generate/distribute font derivatives under their OFL terms without hidden remote font fetches.
 
 ### Download and install design
 

@@ -24,7 +24,7 @@ internal fun mapErrorDetail(message: String?, errorClass: String = "SDK_CALLBACK
     val reason = when {
         text.contains("dns") || text.contains("resolve") -> MapFailureReason.DNS
         status == 403 || text.contains("forbidden") -> MapFailureReason.FORBIDDEN
-        status == 404 || text.contains("not found") -> MapFailureReason.NOT_FOUND
+        status == 404 || text.contains("not found") || text.contains("could not read asset") -> MapFailureReason.NOT_FOUND
         text.contains("context lost") -> MapFailureReason.CONTEXT_LOST
         text.contains("egl") -> MapFailureReason.EGL
         text.contains("memory") -> MapFailureReason.MEMORY
