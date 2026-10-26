@@ -618,7 +618,7 @@ class TftService : Service() {
                     distanceMeters = metres.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                     durationSeconds = 0, destination = geometry.last(), imported = true)
                 prepareImportedRoute(ImportedRoute(imported.name, result, isTrack = true))
-                mutableRouteInfo.value = "GPX ajustado a carreteras · %.1f km · %d puntos\\nComprueba que no haya autovías ni tramos inadecuados antes de salir. No hay avisos de giro ni recálculo.".format(java.util.Locale.ROOT, metres / 1000.0, geometry.size)
+                mutableRouteInfo.value = "GPX ajustado a carreteras · %.1f km · %d puntos\nComprueba que no haya autovías ni tramos inadecuados antes de salir. No hay avisos de giro ni recálculo.".format(java.util.Locale.ROOT, metres / 1000.0, geometry.size)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
