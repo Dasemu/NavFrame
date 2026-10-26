@@ -15,8 +15,8 @@ android {
         applicationId = "dev.navframe.app"
         minSdk = 26
         targetSdk = 35
-        versionName = "0.14.6"
-        versionCode = 23
+        versionName = "0.14.7"
+        versionCode = 24
     }
     if (hasReleaseSigning) {
         signingConfigs.create("production") {
