@@ -593,6 +593,7 @@ class TftService : Service() {
             return
         }
         val stops = imported.route.geometry
+        invalidateRoutePlan() // Do not allow following the unsnapped straight-line waypoints.
         val generation = preparedGeneration
         val options = RouteOptions(profile = RouteProfile.AVOID_MOTORWAYS, avoidMotorways = true, avoidUnpaved = true)
         mutableRouteInfo.value = "Calculando sobre carreteras · evitando autopistas y pistas sin asfaltar…"
@@ -623,7 +624,7 @@ class TftService : Service() {
                 throw cancelled
             } catch (error: Exception) {
                 if (generation == preparedGeneration)
-                    mutableRouteInfo.value = "No se pudo calcular sobre carreteras. Se conserva el GPX original; comprueba conexión y endpoint Valhalla."
+                    mutableRouteInfo.value = "No se pudo calcular por carreteras. No se puede iniciar esta ruta; comprueba Internet y Valhalla y vuelve a importarla."
             }
         }
     }
