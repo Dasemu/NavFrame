@@ -9,7 +9,7 @@ import org.xml.sax.SAXException
 import org.xml.sax.ext.DefaultHandler2
 import kotlin.math.*
 
-data class ImportedRoute(val name: String?, val route: RouteResult)
+data class ImportedRoute(val name: String?, val route: RouteResult, val isTrack: Boolean = false)
 
 /** Imports geometry only: GPX points do not establish road turns, speeds or travel time. */
 object GpxRouteImporter {
@@ -52,7 +52,7 @@ object GpxRouteImporter {
         return ImportedRoute(handler.name?.trim()?.takeIf { it.isNotEmpty() }, RouteResult(
             geometry = points.toList(), maneuvers = emptyList(), distanceMeters = distance.roundToInt().coerceAtLeast(1),
             durationSeconds = 0, destination = points.last(), imported = true,
-        ))
+        ), handler.isTrack)
     }
 
     private class Handler : DefaultHandler2() {
@@ -61,6 +61,7 @@ object GpxRouteImporter {
         private var routeName: String? = null
         private var trackName: String? = null
         val points: List<GeoPoint> get() = if (tracks > 0) trackPoints else routePoints
+        val isTrack: Boolean get() = tracks > 0
         val name: String? get() = if (tracks > 0) trackName else routeName
         private val path = mutableListOf<String>()
         private var rootNamespace = ""
