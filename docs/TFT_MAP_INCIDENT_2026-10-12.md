@@ -47,3 +47,16 @@ After preserving evidence, restarting the map mode or app while stationary can t
 The reviewed code built its debug APK and passed Android lint (zero errors, 76 warnings), 159 unit tests (60 app, 89 core, 10 NaviLite; zero failures or skips), and 17 offline Python tests. The cloud setup uses JDK 17 and Android SDK 36.
 
 These checks do not execute physical MapLibre JNI/OpenGL rendering, Yamaha Bluetooth/TFT behavior, or device power management. They neither reproduce nor rule out this incident. Future fixes need evidence from the device and validation of the affected failure/recovery path.
+
+## Follow-up: persistent history from 13–25 October 2026 (0.13.5)
+
+A shared diagnostic history (100 events, `LOCAL PMTiles`, network connected, GPS recent) showed repeated `SDK/STYLE_READY` failures with `UNKNOWN/UNKNOWN` detail. Each failed in 50–270 ms, well short of the timeout, and recovered after the vehicle moved. Retries reached the 15-second backoff limit and continued for up to 10 minutes. The phone map kept working throughout.
+
+The likely cause is a missing glyph range, which matches this pattern and explains this incident's symptoms:
+
+- `OfflineMapStyle` loads glyphs from `asset://offline/fonts/{fontstack}/{range}.pbf`, but only Unicode ranges 0–2047 were bundled.
+- The bundled Asturias archive contains 4,810 label values with U+1E36/U+1E37 (Asturian `Ḷ`/`ḷ`, range 7680–7935). It also contains 124 with typographic quotes and dashes (U+2013, U+2014, U+2018, U+2019; range 8192–8447). These counts come from scanning every tile's `place` and `roads` string values.
+- In MapLibre Native 13.5.2, a missing asset produces `Could not read asset` (`AssetManagerFileSource`). `GlyphManager` reports it as a glyph error. `Map::Impl::onResourceError` then fails the pending still image with only that message. The message has no keyword that the diagnostic classifier recognized, which gave `SDK` and `UNKNOWN/UNKNOWN`. The phone's continuous `MapView` only logs the same error, so its map keeps working.
+- The failure persists while such a label is in the TFT view and stops once the camera moves away from it.
+
+0.13.7 bundles the unmodified demotiles ranges 7680–7935 and 8192–8447. It also adds an empty placeholder for every other BMP range, so an uncovered character only drops out of a label. A missing asset is now reported as `NOT_FOUND`. Unit tests check that all 256 ranges exist and are well formed, and that the Asturian and punctuation code points are present. The fix still needs to be validated on a device by driving where these failures happened.
