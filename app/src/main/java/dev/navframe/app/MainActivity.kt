@@ -356,12 +356,13 @@ open class MainActivity : Activity() {
                 ensureActive()
                 val current = service ?: run { hint.text = "Servicio no disponible · vuelve a cargar el GPX"; return@launch }
                 cancelSearch(); routeDialog?.dismiss()
-                current.prepareImportedRoute(imported)
+                if (imported.isTrack) current.prepareImportedRoute(imported)
                 lastImportedRoute = imported
                 destination = null; destinationName = ""
-                hint.text = "Ruta GPX cargada"
+                hint.text = if (imported.isTrack) "Traza GPX cargada" else "Calculando GPX sobre carreteras…"
                 showImportedRouteSheet(imported.name)
-                withPermissions(Action.IMPORT_ROUTE)
+                if (imported.isTrack) withPermissions(Action.IMPORT_ROUTE)
+                else current.calculateImportedStops(imported)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 // Parser messages contain no coordinates, file paths or document contents.
@@ -375,11 +376,6 @@ open class MainActivity : Activity() {
         val box = column().apply { setPadding(dp(20), dp(16), dp(20), dp(16)) }
         box.addView(label(name ?: "Ruta GPX", 20f))
         box.addView(routeInfo)
-        lastImportedRoute?.takeIf { !it.isTrack && it.route.geometry.size in 2..50 }?.let { imported ->
-            box.addView(button("Calcular por carreteras · evitar autopistas") {
-                service?.calculateImportedStops(imported)
-            })
-        }
         routeLoading = ProgressBar(this).apply { visibility = View.GONE }
         box.addView(routeLoading)
         retryRouteButton = null
