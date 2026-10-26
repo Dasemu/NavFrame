@@ -2,6 +2,7 @@ package dev.navframe.core
 
 import org.junit.Assert.*
 import org.junit.Test
+import kotlin.math.abs
 
 class RouteGuidanceTest {
     // Equatorial segments are ~111.2m each; original route duration is 30 seconds.
@@ -218,6 +219,82 @@ class RouteGuidanceTest {
         val reversed = tracker.update(fix(lon = 0.00975, time = 2), 1_000, 0)
         assertEquals(NavigationStatus.NAVIGATING, reversed.navigationStatus)
         assertEquals(initial.remainingDistanceMeters, reversed.remainingDistanceMeters)
+    }
+
+    private val importedTrace = RouteResult(
+        listOf(GeoPoint(0.0, 0.0), GeoPoint(0.0, 0.02)), emptyList(), 2224, 0, imported = true)
+
+    private fun deviatedImportedTracker(): RouteGuidanceTracker {
+        val tracker = RouteGuidanceTracker(importedTrace)
+        tracker.update(fix(lon = 0.005), 0, 0)
+        tracker.update(fix(lat = -0.0007, lon = 0.005, time = 2), 3_000, 0)
+        tracker.update(fix(lat = -0.0007, lon = 0.005, time = 3), 6_000, 0)
+        val deviated = tracker.update(fix(lat = -0.0007, lon = 0.005, time = 4), 9_000, 0)
+        assertEquals(NavigationStatus.OFF_ROUTE, deviated.navigationStatus)
+        assertSame(importedTrace, deviated.route)
+        return tracker
+    }
+
+    @Test fun `imported detour rejoins ahead or behind frozen progress without replacing trace`() {
+        for (longitude in listOf(0.012, 0.002)) {
+            val tracker = deviatedImportedTracker()
+            // The isolated relocation is rejected. Stable fixes then reacquire the original trace.
+            assertEquals(NavigationStatus.GPS_LOST,
+                tracker.update(fix(lon = longitude, time = 5), 10_000, 0).navigationStatus)
+            for (i in 6L..7L) {
+                assertEquals(NavigationStatus.OFF_ROUTE,
+                    tracker.update(fix(lon = longitude, time = i), (i + 5) * 1_000, 0).navigationStatus)
+            }
+            val resumed = tracker.update(fix(lon = longitude, time = 8), 13_000, 0)
+            assertEquals(NavigationStatus.NAVIGATING, resumed.navigationStatus)
+            assertTrue(abs(((0.02 - longitude) * 111_195) - resumed.remainingDistanceMeters!!) < 1)
+            assertSame(importedTrace, resumed.route)
+            assertNull(resumed.nextManeuver)
+            assertNull(resumed.etaEpochMillis)
+        }
+    }
+
+    @Test fun `repeated stale and inaccurate fixes cannot confirm imported rejoin`() {
+        val tracker = deviatedImportedTracker()
+        tracker.update(fix(lon = 0.012, time = 5), 10_000, 0)
+        val candidate = fix(lon = 0.012, time = 6)
+        assertEquals(NavigationStatus.OFF_ROUTE, tracker.update(candidate, 11_000, 0).navigationStatus)
+        assertEquals(NavigationStatus.OFF_ROUTE, tracker.update(candidate, 14_000, 0).navigationStatus)
+        assertEquals(NavigationStatus.GPS_LOST,
+            tracker.update(fix(lon = 0.012, time = 7, accuracy = 40f), 15_000, 0).navigationStatus)
+        assertEquals(NavigationStatus.GPS_LOST,
+            tracker.update(fix(lon = 0.012, time = 8), 16_000, 0, 15_001).navigationStatus)
+        tracker.update(fix(lon = 0.012, time = 9), 17_000, 0)
+        tracker.update(fix(lon = 0.012, time = 10), 18_000, 0)
+        tracker.update(fix(lon = 0.012, time = 11), 19_000, 0)
+        assertEquals(NavigationStatus.NAVIGATING,
+            tracker.update(fix(lon = 0.012, time = 12), 20_000, 0).navigationStatus)
+    }
+
+    @Test fun `closed imported trace rejoin at shared start and finish cannot falsely arrive`() {
+        val loop = importedTrace.copy(geometry = listOf(GeoPoint(0.0, 0.0), GeoPoint(0.0, 0.002),
+            GeoPoint(0.002, 0.002), GeoPoint(0.002, 0.0), GeoPoint(0.0, 0.0)))
+        val tracker = RouteGuidanceTracker(loop)
+        tracker.update(fix(lon = 0.0005), 0, 0)
+        for (i in 2L..4L) tracker.update(fix(lat = -0.0007, lon = 0.0005, time = i), (i - 1) * 3_000, 0)
+        for (i in 5L..9L) {
+            val state = tracker.update(fix(time = i), (i + 5) * 1_000, 0)
+            assertNotEquals(NavigationStatus.ARRIVED, state.navigationStatus)
+            if (i >= 7) {
+                assertEquals(NavigationStatus.NAVIGATING, state.navigationStatus)
+                assertTrue(state.remainingDistanceMeters!! > 800)
+            }
+        }
+    }
+
+    @Test fun `imported crossing preserves progress until deviation is sustained`() {
+        val crossing = importedTrace.copy(geometry = listOf(GeoPoint(0.0, 0.0), GeoPoint(0.0, 0.002),
+            GeoPoint(0.002, 0.002), GeoPoint(0.002, 0.0), GeoPoint(0.0, 0.0), GeoPoint(0.0, -0.002)))
+        val tracker = RouteGuidanceTracker(crossing)
+        val initial = tracker.update(fix(), 0, 0)
+        val next = tracker.update(fix(lon = -0.00005, time = 2), 1_000, 0)
+        assertEquals(initial.remainingDistanceMeters, next.remainingDistanceMeters)
+        assertEquals(NavigationStatus.NAVIGATING, next.navigationStatus)
     }
 
     @Test fun `maneuver arrows use type rather than translated prose`() {

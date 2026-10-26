@@ -825,13 +825,16 @@ class TftService : Service() {
         mutableMapDiagnostic.value = "TFT MAP · ${error.failure.name} · ${error.stage.name} · ${SystemClock.elapsedRealtime() - mapRenderStarted} ms · ${error.detail.safeText()} · intento $mapFailures · reintento ${retryMs / 1000} s"
         lastMapFailureDiagnostic = mutableMapDiagnostic.value + " · " + if (mapSource().uri.startsWith("file:")) "LOCAL" else "ONLINE"
         mutableNavigationInfo.value = "MAPA TFT NO DISPONIBLE · ${error.failure.name} · reintento ${retryMs / 1000} s"
-        android.util.Log.w("NavFrame", "MAP_UNAVAILABLE code=${error.failure.name} stage=${error.stage.name} retryMs=$retryMs") // No URLs, API tokens or coordinates.
+        android.util.Log.w("NavFrame", "MAP_UNAVAILABLE code=${error.failure.name} stage=${error.stage.name} detail=${error.detail.safeText()} retryMs=$retryMs") // No URLs, API tokens or coordinates.
         recordMapEvent(MapDiagnosticKind.FAILURE, state, mode, source, retryMs, error)
         return MapFrameComposer().compose(null, null, state, mode, source.attribution, unavailable = true, failureCode = error.failure.name).also { unavailableMapFrame = it }
     }
 
     private suspend fun recordMapEvent(kind: MapDiagnosticKind, state: NavigationState, mode: NavigationMode, source: TileSource, retryMs: Long, error: MapRenderException? = null) {
         val network = mapRenderer?.networkConnected ?: lastMapNetworkConnected
+        val memory = android.app.ActivityManager.MemoryInfo()
+        val memoryAvailable = runCatching { getSystemService(android.app.ActivityManager::class.java).getMemoryInfo(memory) }.isSuccess
+        val interactive = runCatching { getSystemService(android.os.PowerManager::class.java).isInteractive }.getOrNull()
         val event = MapDiagnosticEvent(
             kind = kind, timestampMs = System.currentTimeMillis(),
             source = if (source.uri.startsWith("file:")) MapDiagnosticSource.LOCAL else MapDiagnosticSource.ONLINE,
@@ -839,6 +842,10 @@ class TftService : Service() {
             stage = error?.stage ?: MapRenderStage.COMPOSE, failure = error?.failure,
             resource = error?.detail?.resource ?: MapResourceKind.UNKNOWN, reason = error?.detail?.reason ?: MapFailureReason.UNKNOWN,
             httpStatus = error?.detail?.httpStatus?.takeIf { it in 400..599 },
+            errorClass = error?.detail?.errorClass?.takeIf { it.matches(Regex("[A-Za-z0-9_$]{1,80}")) } ?: "OTHER",
+            sdkEvidence = error?.detail?.sdkEvidence.orEmpty(),
+            screenInteractive = interactive, lowMemory = if (memoryAvailable) memory.lowMemory else null,
+            availableMemoryMb = if (memoryAvailable) (memory.availMem / (1024 * 1024)).coerceAtLeast(0) else null,
             durationMs = (SystemClock.elapsedRealtime() - mapRenderStarted).coerceAtLeast(0), attempts = mapFailures,
             retryMs = retryMs, mode = mode, navigation = state.navigationStatus, connection = mutableState.value,
             androidApi = Build.VERSION.SDK_INT,
