@@ -25,7 +25,22 @@ import java.time.Duration
 @LooperMode(LooperMode.Mode.PAUSED)
 class ImportedRouteTest {
     class PhoneWithoutGpu : MainActivity() { override fun createPhoneMap(savedState: Bundle?): PhoneMapView? = null }
-    private fun imported() = GpxRouteImporter.parse("""<gpx><rte><name>Weekend</name><rtept lat="43.36" lon="-5.85"/><rtept lat="43.37" lon="-5.85"/></rte></gpx>""".byteInputStream())
+    /** A detailed trace (about 11 m between points) is followed as is, without a routing server. */
+    private fun imported() = GpxRouteImporter.parse(("<gpx><trk><name>Weekend</name><trkseg>" +
+        (0..90).joinToString("") { "<trkpt lat=\"${43.36 + it * 0.0001}\" lon=\"-5.85\"/>" } + "</trkseg></trk></gpx>").byteInputStream())
+    private class RoadEngine(val fail: Boolean = false) : RoutingEngine {
+        val requests = mutableListOf<Pair<GeoPoint, GeoPoint>>()
+        override suspend fun calculateRoute(origin: GeoPoint, destination: GeoPoint, options: RouteOptions): RouteResult {
+            requests += origin to destination
+            if (fail) throw java.io.IOException("offline")
+            val bend = GeoPoint((origin.latitude + destination.latitude) / 2, origin.longitude + 0.002)
+            return RouteResult(listOf(origin, bend, destination), listOf(
+                Maneuver("Gire a la derecha", 600, type = 10, beginShapeIndex = 1, endShapeIndex = 2),
+                Maneuver("Ha llegado", 0, type = 4, beginShapeIndex = 2, endShapeIndex = 2),
+            ), 1_200, 120, destination)
+        }
+        override suspend fun recalculateRoute(origin: GeoPoint, previousRoute: RouteResult, options: RouteOptions) = error("unused")
+    }
     private fun tick() = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(100))
     private fun field(name: String) = MainActivity::class.java.getDeclaredField(name).apply { isAccessible = true }
 
@@ -127,8 +142,17 @@ class ImportedRouteTest {
         try {
             shadowOf(RuntimeEnvironment.getApplication()).denyPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             field("service").set(activity, service)
-            importDocument("""<gpx><rte><rtept lat="43.36" lon="-5.85"/><rtept lat="43.37" lon="-5.85"/></rte></gpx>""")
+            val engine = RoadEngine()
+            service.routingEngineFactory = { engine }
+            importDocument("""<gpx><rte><rtept lat="43.36" lon="-5.85"/><rtept lat="43.37" lon="-5.85"/><rtept lat="43.38" lon="-5.85"/></rte></gpx>""")
+            tick()
+            // Route points are joined along roads, keeping turn instructions, never by straight lines.
+            assertEquals(2, engine.requests.size)
             assertTrue(service.preparedRouteIsImported())
+            val routed = requireNotNull(service.navigationState.value.route)
+            assertEquals(5, routed.geometry.size)
+            assertEquals(listOf(10, 10, 4), routed.maneuvers.map { it.type })
+            assertEquals(GeoPoint(43.38, -5.85), routed.destination)
             assertEquals("IMPORT_ROUTE", (field("pendingAction").get(activity) as Enum<*>).name)
             assertFalse(service.hasActiveGuidance())
             val oldRoute = service.navigationState.value.route
@@ -197,4 +221,24 @@ class ImportedRouteTest {
         } finally { activityController.destroy(); serviceController.destroy() }
     }
 
+    @Test fun failedRoadCalculationNeverOffersStraightLinesAndCanBeRetried() {
+        val controller = Robolectric.buildService(TftService::class.java).create()
+        val service = controller.get()
+        service.mapRenderOverride = { _, _ -> TftFrame(encodedBytes = byteArrayOf(1), timestampMs = 0) }
+        try {
+            val stops = GpxRouteImporter.parse("""<gpx><rte><rtept lat="43.36" lon="-5.85"/><rtept lat="43.37" lon="-5.85"/></rte></gpx>""".byteInputStream())
+            assertTrue(stops.needsRoadRouting)
+            service.routingEngineFactory = { RoadEngine(fail = true) }
+            var ready = false
+            service.calculateImportedStops(stops) { ready = true }; tick()
+            assertFalse(ready)
+            assertFalse(service.hasPreparedRoute())
+            assertTrue(service.routeInfo.value.startsWith("No se pudo"))
+            service.routingEngineFactory = { RoadEngine() }
+            service.calculateImportedStops(stops) { ready = true }; tick()
+            assertTrue(ready)
+            assertTrue(service.preparedRouteIsImported())
+            assertEquals(3, service.navigationState.value.route?.geometry?.size)
+        } finally { controller.destroy() }
+    }
 }

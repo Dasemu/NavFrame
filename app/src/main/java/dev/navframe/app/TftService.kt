@@ -19,7 +19,7 @@ class TftService : Service() {
     private var routeJob: Job? = null
     private var routeGeneration = 0L
     private var preparedGeneration = 0L
-    internal var routingEngineFactory: (String) -> RoutingEngine = { ValhallaRoutingEngine(it, "dev.navframe.app/0.6-prototype", language = { NavigationVoicePreferences.language(this).tag }) }
+    internal var routingEngineFactory: (String) -> RoutingEngine = { ValhallaRoutingEngine(it, "dev.navframe.app/${BuildConfig.VERSION_NAME}", language = { NavigationVoicePreferences.language(this).tag }) }
     internal var mapRenderOverride: (suspend (NavigationState, NavigationMode) -> TftFrame)? = null
     private var routePlan: RoutePlan? = null
     private var preparedDestinationDirty = false
@@ -52,7 +52,7 @@ class TftService : Service() {
     private var latestNavigationState = NavigationState()
         set(value) {
             field = value; mutableNavigationState.value = value
-            if (shownRoute?.demo == false && !routePreview && value.route?.imported != true) voice?.update(value)
+            if (shownRoute?.demo == false && !routePreview && value.route?.let { !it.imported || it.maneuvers.isNotEmpty() } != false) voice?.update(value)
             else voice?.reset()
         }
     private var voice: NavigationVoiceController? = null
@@ -77,6 +77,19 @@ class TftService : Service() {
     private var mapRenderStarted = 0L
     private var mapRenderStage = MapRenderStage.INITIALIZE
     private var mapRetryAt = 0L
+    /** Rider zoom adjustment on top of the speed-based TFT camera; persisted across sessions. */
+    var tftZoomOffset: Double = 0.0
+        private set
+    private var forceMapRedraw = false
+    /** Installed offline map used for the TFT while the online source keeps failing. */
+    private var fallbackRenderer: MapLibreTftRenderer? = null
+    private var fallbackUri: String? = null
+    private var onlineRetryAt = 0L
+    private var offlineSources: List<Pair<RegionalBounds, TileSource>> = emptyList()
+    private var offlineSourcesAt = 0L
+    private val mutableTftZoomInfo = MutableStateFlow("")
+    val tftZoomInfo = mutableTftZoomInfo.asStateFlow()
+    private var dashboardRequests = sortedMapOf<Int, Int>()
     private var mapFailures = 0
     private var unavailableMapFrame: TftFrame? = null
     private val mutableMode = MutableStateFlow(NavigationMode.IDLE)
@@ -91,7 +104,7 @@ class TftService : Service() {
     val connectionState = mutableState.asStateFlow()
     private val mutableFrame = MutableStateFlow<TftFrame?>(null)
     val lastFrame = mutableFrame.asStateFlow()
-    private val mutableMessage = MutableStateFlow("Listo para prueba TFT")
+    private val mutableMessage = MutableStateFlow("Listo")
     val message = mutableMessage.asStateFlow()
     private val mutableInterval = MutableStateFlow(1_000L)
     val intervalMs = mutableInterval.asStateFlow()
@@ -100,6 +113,7 @@ class TftService : Service() {
     override fun onCreate() {
         super.onCreate()
         mutableInterval.value = getSharedPreferences("tft", MODE_PRIVATE).getLong("interval_ms", 1_000).coerceIn(500, 3_000)
+        tftZoomOffset = TftCameraPolicy.stepOffset(getSharedPreferences("tft_camera", MODE_PRIVATE).getFloat("zoom_offset", 0f).toDouble(), 0)
         voice = NavigationVoiceController(this).also { controller ->
             mutableVoiceEnabled.value = controller.enabled.value
             scope.launch { controller.status.collect { mutableVoiceStatus.value = it } }
@@ -223,7 +237,7 @@ class TftService : Service() {
                 while (isActive) { delay(30_000); lock.acquire(120_000) }
             }
             TftSessionRunner(
-                transportFactory = { NaviLiteTransport(applicationContext, address) },
+                transportFactory = { NaviLiteTransport(applicationContext, address, ::onDashboardRequest) },
                 latestFrame = { requireNotNull(mutableFrame.value) },
                 policy = { TftSessionPolicy(effectiveInterval()) },
                 clockMs = { SystemClock.elapsedRealtime() },
@@ -369,7 +383,7 @@ class TftService : Service() {
                         else DemoNavigation.stateAt(now - start, startEpoch)
                     latestNavigationState = if (map) withRoute(simulated, true) else simulated
                     scheduler.offer(latestNavigationState)
-                    val ready = scheduler.takeIfDue(now) ?: if (map && mapRetryAt > 0 && now >= mapRetryAt) latestNavigationState else null
+                    val ready = scheduler.takeIfDue(now) ?: if (map && ((mapRetryAt > 0 && now >= mapRetryAt) || consumeForcedRedraw())) latestNavigationState else null
                     if (ready != null) {
                         publishFrame(renderNavigationFrame(ready, mode))
                         scheduler.markRendered(ready, SystemClock.elapsedRealtime())
@@ -451,7 +465,7 @@ class TftService : Service() {
                         checkSpeedCameras(state, now)
                         if (state.navigationStatus == NavigationStatus.OFF_ROUTE && reroutePolicy.shouldRequest(state, now)) requestReroute(false)
                         scheduler.offer(state)
-                        val ready = scheduler.takeIfDue(now) ?: if (map && mapRetryAt > 0 && now >= mapRetryAt) latestNavigationState else null
+                        val ready = scheduler.takeIfDue(now) ?: if (map && ((mapRetryAt > 0 && now >= mapRetryAt) || consumeForcedRedraw())) latestNavigationState else null
                         if (ready != null) {
                             publishFrame(renderNavigationFrame(ready, mode))
                             scheduler.markRendered(ready, SystemClock.elapsedRealtime())
@@ -576,54 +590,62 @@ class TftService : Service() {
             if (generation == preparedGeneration && routePreview) publishFrame(frame)
         }
     }
-    /** Import never contacts a routing server or replaces active guidance before Start. */
+    /** Import never replaces active guidance before Start; a raw trace never contacts a routing server. */
     fun prepareImportedRoute(imported: ImportedRoute) {
-        require(imported.route.imported && imported.route.maneuvers.isEmpty())
+        require(imported.route.imported && !imported.needsRoadRouting)
         RouteGuidanceTracker(imported.route) // Validate before invalidating an existing plan.
         invalidateRoutePlan()
         routePlan = RoutePlan(imported.route, imported.route.geometry.first(), false)
         preparedDestinationDirty = false
-        mutableRouteInfo.value = "GPX · %.1f km · %d puntos\nSigue el trazado: sin instrucciones de giro, ETA ni recálculo automático. Revisa el recorrido antes de iniciar.".format(java.util.Locale.ROOT, imported.route.distanceMeters / 1000.0, imported.route.geometry.size)
+        mutableRouteInfo.value = if (imported.route.maneuvers.isNotEmpty())
+            "GPX por carreteras · %.1f km · %d min\nIndicaciones de giro activas. Si te desvías, vuelve a la ruta: no se recalcula para respetar tus puntos.".format(java.util.Locale.ROOT, imported.route.distanceMeters / 1000.0, (imported.route.durationSeconds + 59) / 60)
+        else "Traza GPX · %.1f km · %d puntos\nSigue el trazado: sin indicaciones de giro ni ETA. Revisa el recorrido antes de iniciar.".format(java.util.Locale.ROOT, imported.route.distanceMeters / 1000.0, imported.route.geometry.size)
         if (!hasActiveGuidance()) showPreparedPreview()
     }
-    /** Resolve GPX route stops against Valhalla; never alter a detailed imported track. */
-    fun calculateImportedStops(imported: ImportedRoute) {
-        if (imported.isTrack || imported.route.geometry.size !in 2..50) {
-            mutableRouteInfo.value = "Solo se pueden calcular rutas GPX con entre 2 y 50 puntos de paso."
-            return
-        }
-        val stops = imported.route.geometry
+    /** Join GPX route points, waypoints or a sparse track along roads; a detailed track is followed as is. */
+    fun calculateImportedStops(imported: ImportedRoute, onReady: () -> Unit = {}) {
+        if (!imported.needsRoadRouting) { prepareImportedRoute(imported); onReady(); return }
+        invalidateRoutePlan() // Never offer the straight lines between stops as a route.
         val generation = preparedGeneration
-        val options = RouteOptions(profile = RouteProfile.AVOID_MOTORWAYS, avoidMotorways = true, avoidUnpaved = true)
-        mutableRouteInfo.value = "Calculando sobre carreteras · evitando autopistas y pistas sin asfaltar…"
+        // A sparse recorded track may follow motorways; planned stops keep the scenic default.
+        val options = if (imported.isTrack) RouteOptions(profile = RouteProfile.FASTEST, avoidUnpaved = true) else RouteOptions(profile = RouteProfile.AVOID_MOTORWAYS, avoidMotorways = true, avoidUnpaved = true)
+        mutableRouteInfo.value = "Calculando la ruta por carreteras · ${imported.stops.size} puntos…"
         routeJob?.cancel()
         routeJob = scope.launch {
             try {
-                val engine = routingEngineFactory(routingEndpoint())
-                val geometry = mutableListOf<GeoPoint>()
-                var metres = 0L
-                for (i in 0 until stops.lastIndex) {
-                    val part = engine.calculateRoute(stops[i], stops[i + 1], options)
-                    ensureActive()
-                    if (part.geometry.size < 2) throw java.io.IOException("Segmento sin geometría")
-                    geometry.addAll(if (i == 0) part.geometry else part.geometry.drop(1))
-                    metres += part.distanceMeters
-                    if (geometry.size > 10_000) throw IllegalArgumentException("La ruta supera 10000 puntos")
-                    if (generation != preparedGeneration) return@launch
-                    mutableRouteInfo.value = "Calculando carreteras · tramo ${i + 1}/${stops.lastIndex}"
-                }
+                val result = routingEngineFactory(routingEndpoint()).calculateRouteThrough(imported.stops, options)
                 ensureActive()
                 if (generation != preparedGeneration) return@launch
-                val result = RouteResult(geometry = geometry, maneuvers = emptyList(),
-                    distanceMeters = metres.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
-                    durationSeconds = 0, destination = geometry.last(), imported = true)
-                prepareImportedRoute(ImportedRoute(imported.name, result, isTrack = true))
-                mutableRouteInfo.value = "GPX ajustado a carreteras · %.1f km · %d puntos\nComprueba que no haya autovías ni tramos inadecuados antes de salir. No hay avisos de giro ni recálculo.".format(java.util.Locale.ROOT, metres / 1000.0, geometry.size)
+                if (result.geometry.size !in 2..100_000) throw IllegalArgumentException("Geometría de ruta inválida")
+                prepareImportedRoute(ImportedRoute(imported.name, result.copy(imported = true), isTrack = imported.isTrack))
+                onReady()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 if (generation == preparedGeneration)
-                    mutableRouteInfo.value = "No se pudo calcular sobre carreteras. Se conserva el GPX original; comprueba conexión y endpoint Valhalla."
+                    mutableRouteInfo.value = if (error is RoutingHttpException && error.status == 429) "No se pudo calcular: servidor de rutas ocupado. Espera un minuto y pulsa Reintentar."
+                        else "No se pudo calcular la ruta por carreteras. Comprueba la conexión a Internet y pulsa Reintentar."
+            }
+        }
+    }
+    /** Positive steps zoom in. Called from the phone and from handlebar requests. */
+    fun adjustTftZoom(steps: Int) {
+        val next = TftCameraPolicy.stepOffset(tftZoomOffset, steps)
+        if (next == tftZoomOffset) { mutableTftZoomInfo.value = if (steps > 0) "Zoom máximo" else "Zoom mínimo"; return }
+        tftZoomOffset = next
+        getSharedPreferences("tft_camera", MODE_PRIVATE).edit().putFloat("zoom_offset", next.toFloat()).apply()
+        mutableTftZoomInfo.value = "Zoom TFT %+.1f".format(java.util.Locale("es", "ES"), next)
+        forceMapRedraw = true
+        if (routePreview && shownRoute != null && navigationJob?.isActive != true) showPreparedPreview()
+    }
+    private fun consumeForcedRedraw(): Boolean = forceMapRedraw.also { forceMapRedraw = false }
+    private fun onDashboardRequest(service: Int, payloadSize: Int) {
+        android.util.Log.i("NavFrame", "NAVILITE_REQUEST service=$service bytes=$payloadSize")
+        scope.launch {
+            dashboardRequests[service] = (dashboardRequests[service] ?: 0) + 1
+            when (service) {
+                NaviLiteTransport.ZOOM_IN_REQUEST -> adjustTftZoom(1)
+                NaviLiteTransport.ZOOM_OUT_REQUEST -> adjustTftZoom(-1)
             }
         }
     }
@@ -649,7 +671,8 @@ class TftService : Service() {
         reroutePaused = false
         if (plan.demo) startDemo(true, preserveRoute = true) else startGps(true, preserveRoute = true)
         if (plan.route.imported) {
-            mutableRouteInfo.value = "GPX iniciado · GPS real · %.1f km\nSigue el trazado · sin giros anunciados, ETA ni recálculo automático.".format(java.util.Locale.ROOT, plan.route.distanceMeters / 1000.0)
+            mutableRouteInfo.value = if (plan.route.maneuvers.isNotEmpty()) "Ruta GPX iniciada · %.1f km · indicaciones de giro activas".format(java.util.Locale.ROOT, plan.route.distanceMeters / 1000.0)
+                else "Traza GPX iniciada · %.1f km · sigue el trazado".format(java.util.Locale.ROOT, plan.route.distanceMeters / 1000.0)
             return
         }
         mutableRouteInfo.value = "${if (preview) "Vista previa" else "Guiado iniciado"} · ${if (plan.demo) "posición DEMO simulada" else "GPS real"} · %.1f km · %d min planificados\nGuiado por geometría · ETA estimada. ${if (plan.demo) "Recorrido DEMO ficticio, sin GPS real ni recálculo automático." else "Recálculo por desvío sostenido; no sustituye señales viales."}".format(java.util.Locale.ROOT, plan.route.distanceMeters / 1000.0, (plan.route.durationSeconds + 59) / 60)
@@ -758,7 +781,7 @@ class TftService : Service() {
         val age = if (fix == null) "SIN FIX" else if (SystemClock.elapsedRealtime() - lastGpsElapsed <= 15_000) "RECIENTE" else "CADUCADO"
         val network = when (mapRenderer?.networkConnected ?: lastMapNetworkConnected) { true -> "CONECTADA"; false -> "SIN CONEXIÓN"; null -> "SIN COMPROBAR" }
         val historyWarning = if (mapHistoryWriteFailed) "\nHistorial persistente: último evento no guardado (TFT_MAP_HISTORY_WRITE_FAILED)." else ""
-        return "NavFrame ${BuildConfig.VERSION_NAME} · Android ${Build.VERSION.SDK_INT} · ${Build.MANUFACTURER} ${Build.MODEL}\nMapLibre OpenGL 13.5.2 · TFT nativo 480×240\nOrigen del mapa: $origin\nRed TFT: $network\n${mutableMapDiagnostic.value}\nÚltimo fallo: $lastMapFailureDiagnostic\nGPS: $age · precisión $accuracy · ${mutableNavigationState.value.navigationStatus}\nTFT: ${mutableState.value} · modo ${mutableMode.value}\nSin coordenadas, consultas, direcciones ni URLs.$historyWarning"
+        return "NavFrame ${BuildConfig.VERSION_NAME} · Android ${Build.VERSION.SDK_INT} · ${Build.MANUFACTURER} ${Build.MODEL}\nMapLibre OpenGL 13.5.2 · TFT nativo 480×240\nOrigen del mapa: $origin\nRed TFT: $network\n${mutableMapDiagnostic.value}\nÚltimo fallo: $lastMapFailureDiagnostic\nGPS: $age · precisión $accuracy · ${mutableNavigationState.value.navigationStatus}\nTFT: ${mutableState.value} · modo ${mutableMode.value}\nZoom TFT: ${"%+.1f".format(java.util.Locale.ROOT, tftZoomOffset)} · peticiones de la moto: ${dashboardRequests.entries.joinToString { "${it.key}×${it.value}" }.ifEmpty { "ninguna" }}\nSin coordenadas, consultas, direcciones ni URLs.$historyWarning"
     }
     fun isRealSessionRequested(): Boolean = realRequested
     fun isGpsSessionActive(): Boolean = gpsRequested
@@ -818,6 +841,7 @@ class TftService : Service() {
         if (next == previous) return
         // Release the previous local archive even if restarting GPS fails permission/provider checks.
         mapRenderer?.close(); mapRenderer = null
+        releaseMapFallback(); onlineRetryAt = 0
         when (mutableMode.value) {
             NavigationMode.MAP_DEMO -> if (routePreview && shownRoute != null) showPreparedPreview() else startDemo(true, preserveRoute = true)
             NavigationMode.MAP_GPS -> if (routePreview && !gpsRequested && shownRoute != null) showPreparedPreview() else startGps(true, preserveRoute = true)
@@ -832,16 +856,20 @@ class TftService : Service() {
         }
         val now = SystemClock.elapsedRealtime()
         if (mapRetryAt > now) return MapFrameComposer().compose(null, null, state, mode, source.attribution, unavailable = true, failureCode = mutableMapDiagnostic.value.split(" · ").getOrNull(1)).also { unavailableMapFrame = it }
+        val online = !source.uri.startsWith("file:")
+        if (online && now < onlineRetryAt) offlineFallbackFrame(state, mode)?.let { return it }
         mapRenderStarted = SystemClock.elapsedRealtime()
         mapRenderStage = MapRenderStage.INITIALIZE
         try {
             val frame = mapRenderOverride?.invoke(state, mode) ?: run {
-                val current = mapRenderer ?: MapLibreTftRenderer(applicationContext, ConfiguredMapDataSource(if (source.uri.startsWith("asset://")) "" else source.uri, source.attribution, applicationContext)) { stage ->
+                val current = mapRenderer ?: MapLibreTftRenderer(applicationContext, ConfiguredMapDataSource(if (source.uri.startsWith("asset://")) "" else source.uri, source.attribution, applicationContext), { tftZoomOffset }) { stage ->
                     mapRenderStage = stage
                     mutableMapDiagnostic.value = "TFT MAP · ${stage.name} · ${if (source.uri.startsWith("file:")) "LOCAL" else "ONLINE"}"
                 }.also { mapRenderer = it }
                 current.render(state, mode)
             }
+            onlineRetryAt = 0
+            releaseMapFallback()
             if (mapFailures > 0) recordMapEvent(MapDiagnosticKind.RECOVERED, state, mode, source, retryMs = 0)
             mutableMapDiagnostic.value = "TFT MAP · OK · ${SystemClock.elapsedRealtime() - mapRenderStarted} ms · 480×240"
             mapFailures = 0
@@ -851,10 +879,61 @@ class TftService : Service() {
             return frame
         } catch (cancelled: CancellationException) {
             currentCoroutineContext().ensureActive() // A local map timeout is recoverable; STOP is not.
-            return mapUnavailable(state, mode, source, MapRenderException(MapRenderFailure.TIMEOUT, mapRenderStage))
+            return onlineFailed(state, mode, source, MapRenderException(MapRenderFailure.TIMEOUT, mapRenderStage))
         } catch (error: Exception) {
-            return mapUnavailable(state, mode, source, error as? MapRenderException ?: MapRenderException(classifyMapRenderFailure(error.message), mapRenderStage, mapErrorDetail(error.message, error.javaClass.simpleName)))
+            return onlineFailed(state, mode, source, error as? MapRenderException ?: MapRenderException(classifyMapRenderFailure(error.message), mapRenderStage, mapErrorDetail(error.message, error.javaClass.simpleName)))
         }
+    }
+    /**
+     * A still snapshot fails as a whole when any tile request fails, which is common with
+     * patchy mobile coverage. Prefer an installed offline map over an error frame.
+     */
+    private suspend fun onlineFailed(state: NavigationState, mode: NavigationMode, source: TileSource, error: MapRenderException): TftFrame {
+        if (source.uri.startsWith("file:")) return mapUnavailable(state, mode, source, error)
+        android.util.Log.w("NavFrame", "MAP_ONLINE_FAILED code=${error.failure.name} stage=${error.stage.name} detail=${error.detail.safeText()}")
+        mapRenderer?.close(); mapRenderer = null
+        onlineRetryAt = SystemClock.elapsedRealtime() + ONLINE_RETRY_MS
+        lastMapFailureDiagnostic = "TFT MAP · ${error.failure.name} · ${error.stage.name} · ${error.detail.safeText()} · ONLINE"
+        val frame = offlineFallbackFrame(state, mode)
+        if (frame != null) return frame
+        onlineRetryAt = 0
+        return mapUnavailable(state, mode, source, error)
+    }
+    private suspend fun offlineFallbackFrame(state: NavigationState, mode: NavigationMode): TftFrame? {
+        val now = SystemClock.elapsedRealtime()
+        if (offlineSourcesAt == 0L || now - offlineSourcesAt > 60_000) {
+            offlineSourcesAt = now
+            offlineSources = try {
+                val packs = OfflineMapManager(applicationContext).let { it.refresh(); it.packs.value }
+                    .filter { it.state == OfflinePackState.READY }
+                    .map { RegionalBounds(it.bounds.south, it.bounds.west, it.bounds.north, it.bounds.east) to it.source }
+                val regions = RegionalPackManager(applicationContext).let { it.refresh(); RegionalPackManager.latest(it.regions.value) }
+                    .map { it.manifest.bounds to it.source }
+                packs + regions
+            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { emptyList() }
+        }
+        val position = state.position
+        val source = offlineSources.firstOrNull { (bounds, _) -> position.latitude in bounds.south..bounds.north && position.longitude in bounds.west..bounds.east }?.second
+            ?: return null
+        if (fallbackUri != source.uri) releaseMapFallback()
+        mapRenderStarted = SystemClock.elapsedRealtime()
+        return try {
+            val renderer = fallbackRenderer ?: MapLibreTftRenderer(applicationContext, ConfiguredMapDataSource(source.uri, source.attribution, applicationContext), { tftZoomOffset })
+                .also { fallbackRenderer = it; fallbackUri = source.uri }
+            renderer.render(state, mode).also {
+                mutableMapDiagnostic.value = "TFT MAP · OFFLINE DE RESPALDO · ${SystemClock.elapsedRealtime() - mapRenderStarted} ms · reintento online en ${ONLINE_RETRY_MS / 1000} s"
+                mapFailures = 0; mapRetryAt = 0; unavailableMapFrame = null
+            }
+        } catch (cancelled: CancellationException) {
+            currentCoroutineContext().ensureActive()
+            releaseMapFallback(); null
+        } catch (_: Exception) { releaseMapFallback(); null }
+    }
+    /** Closes the offline fallback renderer, for example before deleting its archive. */
+    fun releaseMapFallback() {
+        fallbackRenderer?.close(); fallbackRenderer = null; fallbackUri = null
+        // Do not rescan (and reopen) packs that may be in the middle of being deleted.
+        offlineSources = emptyList(); offlineSourcesAt = SystemClock.elapsedRealtime()
     }
     private suspend fun mapUnavailable(state: NavigationState, mode: NavigationMode, source: TileSource, error: MapRenderException): TftFrame {
         lastMapNetworkConnected = mapRenderer?.networkConnected ?: lastMapNetworkConnected
@@ -911,7 +990,7 @@ class TftService : Service() {
         return Notification.Builder(this, "tft")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setContentTitle("NavFrame · Yamaha TFT")
-            .setContentText(if (realRequested) "$notificationText · ${mutableMode.value}" else "GPS activo · sin conexión TFT")
+            .setContentText(if (realRequested) notificationText + when (mutableMode.value) { NavigationMode.GPS, NavigationMode.MAP_GPS -> " · navegando"; NavigationMode.DEMO, NavigationMode.MAP_DEMO -> " · simulación"; NavigationMode.IDLE -> "" } else "GPS activo · sin conexión TFT")
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
             .addAction(Notification.Action.Builder(null, "Detener todo", stop).build()).build()
     }
@@ -926,6 +1005,7 @@ class TftService : Service() {
         navigationJob?.cancel()
         mapRenderer?.close()
         mapRenderer = null
+        releaseMapFallback()
         try { locationProvider?.close() } catch (_: SecurityException) { }
         locationProvider = null
         scope.cancel() // Cancelling runner closes its socket in NonCancellable cleanup.
@@ -934,6 +1014,7 @@ class TftService : Service() {
         super.onDestroy()
     }
     companion object {
+        private const val ONLINE_RETRY_MS = 30_000L
         const val ACTION_REAL = "dev.navframe.CONNECT_REAL"
         const val ACTION_GPS = "dev.navframe.START_GPS"
         const val ACTION_MAP_GPS = "dev.navframe.START_MAP_GPS"

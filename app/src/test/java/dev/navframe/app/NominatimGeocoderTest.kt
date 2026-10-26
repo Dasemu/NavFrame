@@ -43,7 +43,7 @@ class NominatimGeocoderTest {
         assertFalse(url.contains("viewbox")); assertFalse(url.contains("lat=")); assertFalse(url.contains("lon="))
         assertTrue(result.name.contains("Asturias"))
         assertTrue(result.attribution.contains("OpenStreetMap"))
-        assertTrue(http.getRequestProperty("User-Agent").startsWith("NavFrame/0.6"))
+        assertTrue(http.getRequestProperty("User-Agent").startsWith("NavFrame/${BuildConfig.VERSION_NAME} "))
     }
     @Test fun cancellingSearchClosesItsConnectionAndBlockingRead() = runBlocking {
         val http = Connection(block = true)

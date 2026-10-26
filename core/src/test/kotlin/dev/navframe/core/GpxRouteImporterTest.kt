@@ -103,4 +103,27 @@ class GpxRouteImporterTest {
         assertNull(outside.etaEpochMillis)
     }
 
+    @Test fun `route points and waypoints are stops to join along roads`() {
+        val route = parse("<gpx><rte>$points<rtept lat=\"43.001\" lon=\"-5\"/></rte></gpx>")
+        assertTrue(route.needsRoadRouting)
+        // Consecutive duplicates would only produce zero-length legs.
+        assertEquals(listOf(GeoPoint(43.0, -5.0), GeoPoint(43.001, -5.0)), route.stops)
+        val waypoints = parse("<gpx><metadata/><wpt lat=\"43\" lon=\"-5\"/><wpt lat=\"43.2\" lon=\"-5.1\"/><wpt lat=\"43.4\" lon=\"-5\"/></gpx>")
+        assertFalse(waypoints.isTrack)
+        assertEquals(3, waypoints.stops.size)
+    }
+    @Test fun `detailed tracks are followed but sparse tracks are road routed`() {
+        fun track(step: Double, count: Int) = parse("<gpx><trk><trkseg>" +
+            (0 until count).joinToString("") { "<trkpt lat=\"${43 + it * step}\" lon=\"-5\"/>" } + "</trkseg></trk></gpx>")
+        val recorded = track(0.0002, 200) // About 22 m apart.
+        assertTrue(recorded.isTrack)
+        assertFalse(recorded.needsRoadRouting)
+        val planned = track(0.01, 30) // About 1.1 km apart: straight lines between clicks.
+        assertTrue(planned.needsRoadRouting)
+        assertEquals(30, planned.stops.size)
+        val long = track(0.004, 1_000)
+        assertEquals(GpxRouteImporter.MAX_STOPS, long.stops.size)
+        assertEquals(long.route.geometry.first(), long.stops.first())
+        assertEquals(long.route.geometry.last(), long.stops.last())
+    }
 }

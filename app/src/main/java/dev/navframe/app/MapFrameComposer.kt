@@ -61,7 +61,7 @@ class MapFrameComposer {
                 if (warning != null) {
                     text(fitted(warning, 16f, 460f), 10f, 39f, 16f, if (state.navigationStatus == NavigationStatus.ARRIVED) accent else Color.YELLOW)
                 } else {
-                    val imported = state.route?.imported == true
+                    val imported = state.route?.let { it.imported && it.maneuvers.isEmpty() } == true
                     val maneuver = state.nextManeuver
                     val direction = maneuverDirection(maneuver?.type).name
                     canvas.save()
@@ -85,7 +85,7 @@ class MapFrameComposer {
                 }
             } else if (preview) {
                 val route = requireNotNull(state.route)
-                val summary = if (route.imported) "GPX · %.1f km · seguir trazado".format(java.util.Locale.ROOT, route.distanceMeters / 1000.0) else "PREVIA · %.1f km · %d min".format(java.util.Locale.ROOT, route.distanceMeters / 1000.0, (route.durationSeconds + 59) / 60)
+                val summary = if (route.imported && route.maneuvers.isEmpty()) "GPX · %.1f km · seguir trazado".format(java.util.Locale.ROOT, route.distanceMeters / 1000.0) else "PREVIA · %.1f km · %d min".format(java.util.Locale.ROOT, route.distanceMeters / 1000.0, (route.durationSeconds + 59) / 60)
                 text(fitted(summary, 13f, 460f), 8f, 31f, 13f)
             }
 

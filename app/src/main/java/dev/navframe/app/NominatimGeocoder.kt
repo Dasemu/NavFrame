@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** Button-triggered prototype search only: no autocomplete, GPS, viewbox or persisted query history. */
+/** Button-triggered search only: no autocomplete, GPS, viewbox or persisted query history. */
 class NominatimGeocoder(
     private val endpoint: String = DEFAULT_ENDPOINT,
     private val openConnection: (String) -> HttpURLConnection = { URI(it).toURL().openConnection() as HttpURLConnection },
@@ -54,7 +54,7 @@ class NominatimGeocoder(
                         http.requestMethod = "GET"
                         http.connectTimeout = 8_000; http.readTimeout = 12_000
                         http.instanceFollowRedirects = false
-                        http.setRequestProperty("User-Agent", "NavFrame/0.6 (Android navigation prototype)")
+                        http.setRequestProperty("User-Agent", "NavFrame/${BuildConfig.VERSION_NAME} (Android navigation)")
                         http.setRequestProperty("Accept", "application/json")
                         val status = http.responseCode
                         if (status != 200) {

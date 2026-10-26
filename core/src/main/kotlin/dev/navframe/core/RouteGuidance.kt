@@ -22,6 +22,9 @@ data class GuidanceConfig(
     }
 }
 
+/** Raw imported traces carry no travel time; road-routed imports keep the server's estimate. */
+val RouteResult.hasEta: Boolean get() = !imported || durationSeconds > 0
+
 /** Stateful projection/progress for one route. Create another tracker when replacing the route. */
 class RouteGuidanceTracker(private val route: RouteResult, private val config: GuidanceConfig = GuidanceConfig()) {
     private val line = RouteLine(route)
@@ -55,7 +58,7 @@ class RouteGuidanceTracker(private val route: RouteResult, private val config: G
         val distinct = lastTimestamp != fix.timestampMs
         if (!distinct) return lastState ?: base.copy(navigationStatus = NavigationStatus.GPS_LOST)
         if (arrived) return remember(base.copy(speed = 0f, remainingDistanceMeters = 0,
-            etaEpochMillis = if (route.imported) null else epochMs, navigationStatus = NavigationStatus.ARRIVED))
+            etaEpochMillis = if (!route.hasEta) null else epochMs, navigationStatus = NavigationStatus.ARRIVED))
         if (needsRecovery || lastNow?.let { nowMs - it > config.maxFixAgeMs } == true) {
             outside.reset(); arrival.reset(); rejoin.reset(); rejoinProgress = null
             needsRecovery = false
@@ -119,7 +122,7 @@ class RouteGuidanceTracker(private val route: RouteResult, private val config: G
             earthDistance(fix.position, route.geometry.last()) <= config.arrivalRadiusMeters
         arrived = arrival.observe(close, distinct, nowMs, config.arrivalFixes, config.arrivalDurationMs)
         if (arrived) return remember(base.copy(speed = 0f, remainingDistanceMeters = 0,
-            etaEpochMillis = if (route.imported) null else epochMs, navigationStatus = NavigationStatus.ARRIVED))
+            etaEpochMillis = if (!route.hasEta) null else epochMs, navigationStatus = NavigationStatus.ARRIVED))
         return remember(line.guidedState(base, progress, epochMs))
     }
 }
@@ -154,9 +157,9 @@ class RouteDemo(private val route: RouteResult, private val speedMetersPerSecond
         val base = NavigationState(position = position, bearing = bearing, speed = speedMetersPerSecond,
             route = route, accuracyMeters = 3f)
         if (progress >= line.total) return base.copy(speed = 0f, remainingDistanceMeters = 0,
-            etaEpochMillis = if (route.imported) null else epochMs, navigationStatus = NavigationStatus.ARRIVED)
+            etaEpochMillis = if (!route.hasEta) null else epochMs, navigationStatus = NavigationStatus.ARRIVED)
         val state = line.guidedState(base, progress, epochMs)
-        return state.copy(etaEpochMillis = if (route.imported) null else saturatedAdd(epochMs, ((line.total - progress) / speedMetersPerSecond * 1000).roundToLong()))
+        return state.copy(etaEpochMillis = if (!route.hasEta) null else saturatedAdd(epochMs, ((line.total - progress) / speedMetersPerSecond * 1000).roundToLong()))
     }
 }
 
@@ -249,7 +252,7 @@ private class RouteLine(private val route: RouteResult) {
         val etaMs = (route.durationSeconds * 1000.0 * remaining / total).roundToLong()
         return base.copy(nextManeuver = next?.first,
             distanceToNextManeuverMeters = next?.let { (it.second - progress).coerceAtLeast(0.0).roundToInt() },
-            remainingDistanceMeters = remaining.roundToInt(), etaEpochMillis = if (route.imported) null else saturatedAdd(epochMs, etaMs),
+            remainingDistanceMeters = remaining.roundToInt(), etaEpochMillis = if (!route.hasEta) null else saturatedAdd(epochMs, etaMs),
             navigationStatus = NavigationStatus.NAVIGATING)
     }
     fun pointAt(progress: Double): Pair<GeoPoint, Float> {

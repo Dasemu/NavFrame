@@ -9,22 +9,28 @@ import kotlin.math.roundToInt
 
 private const val MAX_RESPONSE_CHARS = 2 * 1024 * 1024
 private const val MAX_SHAPE_POINTS = 100_000
+/** Public Valhalla instances commonly cap a request at 20 locations. */
+const val MAX_REQUEST_LOCATIONS = 20
 private val routeJson = GsonBuilder().setStrictness(Strictness.STRICT).create()
 
 /** Original adapter; no Valhalla implementation code is embedded. Errors omit response contents. */
 class ValhallaRouteException(message: String) : IllegalArgumentException(message)
 
 /** Explicit coordinate request. The HTTP adapter owns rate limits, headers and cancellation. */
-fun buildValhallaRequest(origin: GeoPoint, destination: GeoPoint, options: RouteOptions = RouteOptions(), language: String = "es-ES"): String {
-    validatePoint(origin)
-    validatePoint(destination)
+fun buildValhallaRequest(origin: GeoPoint, destination: GeoPoint, options: RouteOptions = RouteOptions(), language: String = "es-ES"): String =
+    buildValhallaRequest(listOf(origin, destination), options, language)
+
+/** Intermediate stops are `through` locations: one leg, no arrival announcements or U-turns at them. */
+fun buildValhallaRequest(stops: List<GeoPoint>, options: RouteOptions = RouteOptions(), language: String = "es-ES"): String {
+    if (stops.size !in 2..MAX_REQUEST_LOCATIONS) invalid("Invalid routing location count")
+    stops.forEach(::validatePoint)
     val request = JsonObject()
     request.add("locations", JsonArray().apply {
-        listOf(origin, destination).forEach { point ->
+        stops.forEachIndexed { index, point ->
             add(JsonObject().apply {
                 addProperty("lat", point.latitude)
                 addProperty("lon", point.longitude)
-                addProperty("type", "break")
+                addProperty("type", if (index == 0 || index == stops.lastIndex) "break" else "through")
             })
         }
     })
@@ -151,6 +157,39 @@ fun parseValhallaRoute(json: String, destination: GeoPoint? = null): RouteResult
         // Do not leak backend messages, response JSON or coordinates into logs/UI.
         invalid("Malformed routing response")
     }
+}
+
+/**
+ * Join consecutive routes that share their boundary stop into one route. Maneuver indices are
+ * rebased onto the merged geometry and arrivals at intermediate boundaries are dropped.
+ */
+fun mergeRouteLegs(parts: List<RouteResult>): RouteResult {
+    require(parts.isNotEmpty()) { "No route parts" }
+    if (parts.size == 1) return parts.single()
+    val geometry = ArrayList<GeoPoint>()
+    val maneuvers = ArrayList<Maneuver>()
+    var meters = 0L
+    var seconds = 0L
+    parts.forEachIndexed { index, part ->
+        require(part.geometry.size >= 2) { "Route part has insufficient geometry" }
+        val skipFirst = geometry.isNotEmpty() && geometry.last() == part.geometry.first()
+        val offset = geometry.size - if (skipFirst) 1 else 0
+        geometry.addAll(if (skipFirst) part.geometry.drop(1) else part.geometry)
+        val last = index == parts.lastIndex
+        // Chunk boundaries are not real stops: drop their arrivals and the next chunk's depart (types 1-3).
+        part.maneuvers.filter { (last || maneuverDirection(it.type) != ManeuverDirection.ARRIVAL) && (index == 0 || it.type !in 1..3) }.mapTo(maneuvers) {
+            it.copy(beginShapeIndex = it.beginShapeIndex?.plus(offset), endShapeIndex = it.endShapeIndex?.plus(offset))
+        }
+        meters += part.distanceMeters
+        seconds += part.durationSeconds
+    }
+    if (geometry.size > MAX_SHAPE_POINTS + 1) invalid("Too many route shape points")
+    val surfaces = parts.map { it.hasUnpaved }
+    return parts.last().copy(geometry = geometry, maneuvers = maneuvers,
+        distanceMeters = meters.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+        durationSeconds = seconds.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+        hasUnpaved = if (true in surfaces) true else if (surfaces.all { it == false }) false else null,
+        guidanceLanguage = parts.first().guidanceLanguage)
 }
 
 private fun validatePoint(point: GeoPoint) {

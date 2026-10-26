@@ -163,4 +163,30 @@ class ValhallaRouteTest {
         try { block(); fail("Expected invalid routing data to be rejected") }
         catch (_: ValhallaRouteException) { /* expected */ }
     }
+
+    @Test fun `multi stop request routes through intermediate stops in one leg`() {
+        val stops = (0..4).map { GeoPoint(43.3 + it * 0.01, -5.8) }
+        val locations = JsonParser.parseString(buildValhallaRequest(stops)).asJsonObject.getAsJsonArray("locations")
+        assertEquals(listOf("break", "through", "through", "through", "break"), locations.map { it.asJsonObject["type"].asString })
+        assertEquals(43.32, locations[2].asJsonObject["lat"].asDouble, 1e-9)
+        try { buildValhallaRequest(List(MAX_REQUEST_LOCATIONS + 1) { stops[0] }); fail("Expected location limit") } catch (_: ValhallaRouteException) { }
+    }
+    @Test fun `merged legs rebase maneuvers and drop intermediate arrivals`() {
+        val a = GeoPoint(43.0, -5.0); val b = GeoPoint(43.01, -5.0); val c = GeoPoint(43.02, -5.0); val d = GeoPoint(43.03, -5.0)
+        fun part(from: GeoPoint, mid: GeoPoint, to: GeoPoint, unpaved: Boolean?) = RouteResult(listOf(from, mid, to), listOf(
+            Maneuver("start", 10, type = 1, beginShapeIndex = 0, endShapeIndex = 1),
+            Maneuver("right", 10, type = 10, beginShapeIndex = 1, endShapeIndex = 2),
+            Maneuver("arrive", 0, type = 4, beginShapeIndex = 2, endShapeIndex = 2),
+        ), 1_000, 60, to, hasUnpaved = unpaved)
+        val merged = mergeRouteLegs(listOf(part(a, b, c, false), part(c, GeoPoint(43.025, -5.0), d, null)))
+        assertEquals(5, merged.geometry.size)
+        assertEquals(listOf(1, 10, 10, 4), merged.maneuvers.map { it.type })
+        assertEquals(listOf(0, 1, 3, 4), merged.maneuvers.map { it.beginShapeIndex })
+        assertEquals(2_000, merged.distanceMeters)
+        assertEquals(120, merged.durationSeconds)
+        assertNull(merged.hasUnpaved)
+        assertEquals(d, merged.destination)
+        // Independently snapped endpoints that do not coincide keep both points.
+        assertEquals(6, mergeRouteLegs(listOf(part(a, b, c, true), part(GeoPoint(43.0201, -5.0), GeoPoint(43.025, -5.0), d, false))).geometry.size)
+    }
 }

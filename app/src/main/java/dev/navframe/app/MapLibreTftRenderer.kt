@@ -25,7 +25,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /** The service owns this dedicated 480×240 GPU snapshot target, not a phone MapView or Activity. */
-class MapLibreTftRenderer(context: Context, private val source: MapDataSource, private val reportStage: (MapRenderStage) -> Unit = {}) : TftRenderer {
+class MapLibreTftRenderer(context: Context, private val source: MapDataSource, private val zoomOffset: () -> Double = { 0.0 }, private val reportStage: (MapRenderStage) -> Unit = {}) : TftRenderer {
     private val context = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val composer = MapFrameComposer()
@@ -71,9 +71,11 @@ class MapLibreTftRenderer(context: Context, private val source: MapDataSource, p
         // (including screen off) and initialize from the current network, not a stale event.
         connectivity.refresh()
         val position = LatLng(state.position.latitude, state.position.longitude)
-        val camera = TftCameraPolicy().parameters(state)
+        val camera = TftCameraPolicy(zoomOffset()).parameters(state)
+        // Top padding moves the focal point (the rider) down to riderAnchorY of the frame height.
         val cameraPosition = CameraPosition.Builder().target(position).zoom(camera.zoom)
-            .bearing(camera.bearingDegrees.toDouble()).padding(0.0, 50.0, 0.0, 0.0).build()
+            .bearing(camera.bearingDegrees.toDouble()).tilt(camera.pitchDegrees)
+            .padding(0.0, ((2 * camera.riderAnchorY - 1) * 240.0).coerceAtLeast(0.0), 0.0, 0.0).build()
         val current = snapshotter ?: run {
             val tile = source.tileSource()
             val builder = if (tile.uri.startsWith("asset://")) Style.Builder().fromJson(context.assets.open(tile.uri.removePrefix("asset://")).bufferedReader().use { it.readText() })

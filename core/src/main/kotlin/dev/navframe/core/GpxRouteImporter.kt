@@ -9,12 +9,22 @@ import org.xml.sax.SAXException
 import org.xml.sax.ext.DefaultHandler2
 import kotlin.math.*
 
-data class ImportedRoute(val name: String?, val route: RouteResult, val isTrack: Boolean = false)
+/**
+ * [stops] is non-empty when the geometry is a list of points to be joined along roads
+ * (route points, waypoints or a sparse track) rather than a trace that can be followed as is.
+ */
+data class ImportedRoute(val name: String?, val route: RouteResult, val isTrack: Boolean = false, val stops: List<GeoPoint> = emptyList()) {
+    val needsRoadRouting: Boolean get() = stops.size >= 2
+}
 
 /** Imports geometry only: GPX points do not establish road turns, speeds or travel time. */
 object GpxRouteImporter {
     const val MAX_BYTES = 5 * 1024 * 1024
     const val MAX_POINTS = 10_000
+    /** Upper bound of points sent to the routing server for one import. */
+    const val MAX_STOPS = 400
+    /** Recorded or road-snapped traces are much denser; planners' hand-placed points are not. */
+    const val SPARSE_TRACK_MEDIAN_METERS = 250.0
     const val MAX_DEPTH = 64
     private val namespaces = setOf("", "http://www.topografix.com/GPX/1/0", "http://www.topografix.com/GPX/1/1")
 
@@ -49,18 +59,30 @@ object GpxRouteImporter {
         if (points.size < 2) fail("El GPX necesita al menos dos puntos de ruta o track.")
         val distance = points.zipWithNext().sumOf { (a, b) -> distance(a, b) }
         if (!distance.isFinite() || distance <= 0.0) fail("El GPX necesita al menos dos puntos distintos.")
+        val stops = if (!handler.isTrack || isSparse(points)) downsample(points.filterIndexed { i, point -> i == 0 || point != points[i - 1] }) else emptyList()
         return ImportedRoute(handler.name?.trim()?.takeIf { it.isNotEmpty() }, RouteResult(
             geometry = points.toList(), maneuvers = emptyList(), distanceMeters = distance.roundToInt().coerceAtLeast(1),
             durationSeconds = 0, destination = points.last(), imported = true,
-        ), handler.isTrack)
+        ), handler.isTrack, stops)
+    }
+
+    private fun isSparse(points: List<GeoPoint>): Boolean {
+        val gaps = points.zipWithNext().map { (a, b) -> distance(a, b) }.filter { it > 0.0 }.sorted()
+        return gaps.isNotEmpty() && gaps[gaps.size / 2] > SPARSE_TRACK_MEDIAN_METERS
+    }
+    /** Keep the endpoints and an even spread of the remaining points. */
+    private fun downsample(points: List<GeoPoint>): List<GeoPoint> {
+        if (points.size <= MAX_STOPS) return points
+        return (0 until MAX_STOPS).map { points[(it.toLong() * points.lastIndex / (MAX_STOPS - 1)).toInt()] }
     }
 
     private class Handler : DefaultHandler2() {
         private val routePoints = mutableListOf<GeoPoint>()
         private val trackPoints = mutableListOf<GeoPoint>()
+        private val waypoints = mutableListOf<GeoPoint>()
         private var routeName: String? = null
         private var trackName: String? = null
-        val points: List<GeoPoint> get() = if (tracks > 0) trackPoints else routePoints
+        val points: List<GeoPoint> get() = if (tracks > 0) trackPoints else if (routes > 0) routePoints else waypoints
         val isTrack: Boolean get() = tracks > 0
         val name: String? get() = if (tracks > 0) trackName else routeName
         private val path = mutableListOf<String>()
@@ -88,15 +110,16 @@ object GpxRouteImporter {
             }
             if (path == listOf("gpx", "trk", "trkseg")) segmentPoints = 0
             if (path == listOf("gpx", "rte", "name") || path == listOf("gpx", "trk", "name")) nameText = StringBuilder()
-            if (path == listOf("gpx", "rte", "rtept") || path == listOf("gpx", "trk", "trkseg", "trkpt")) {
-                if (routePoints.size + trackPoints.size >= MAX_POINTS) fail("El GPX supera los 10000 puntos. Simplifica la ruta antes de importarla.")
+            if (path == listOf("gpx", "rte", "rtept") || path == listOf("gpx", "trk", "trkseg", "trkpt") || path == listOf("gpx", "wpt")) {
+                if (routePoints.size + trackPoints.size + waypoints.size >= MAX_POINTS) fail("El GPX supera los 10000 puntos. Simplifica la ruta antes de importarla.")
                 val lat = attributes.getValue("lat")?.toDoubleOrNull()
                 val lon = attributes.getValue("lon")?.toDoubleOrNull()
                 if (lat == null || lon == null || !lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0) fail("El GPX contiene coordenadas inválidas.")
-                if (path[1] == "trk") {
-                    trackPoints.add(GeoPoint(lat, lon))
-                    segmentPoints++
-                } else routePoints.add(GeoPoint(lat, lon))
+                when (path[1]) {
+                    "trk" -> { trackPoints.add(GeoPoint(lat, lon)); segmentPoints++ }
+                    "rte" -> routePoints.add(GeoPoint(lat, lon))
+                    else -> waypoints.add(GeoPoint(lat, lon))
+                }
             }
         }
         override fun characters(ch: CharArray, start: Int, length: Int) {
