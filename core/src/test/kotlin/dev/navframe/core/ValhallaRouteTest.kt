@@ -207,5 +207,28 @@ class ValhallaRouteTest {
         assertEquals(trace.destination, merged.destination)
         assertEquals(0, merged.durationSeconds) // A trace never shows an ETA.
     }
+
+    @Test fun `rejoining an imported route never goes back and counts points passed nearby`() {
+        val points = (0..10).map { GeoPoint(43.0 + it * 0.001, -5.0) } // About 111 m apart.
+        val route = RouteResult(points, listOf(
+            Maneuver("right", 100, type = 10, beginShapeIndex = 3, endShapeIndex = 4),
+            Maneuver("left", 100, type = 15, beginShapeIndex = 7, endShapeIndex = 8),
+        ), 1_110, 100, points.last(), imported = true)
+        val step = routeLength(route) / 10
+        // Off to the side of point 2, but progress already reached point 5.
+        val ahead = rejoinRemainder(route, GeoPoint(43.002, -4.998), 5 * step - 1)!!
+        assertEquals(points[5], ahead.geometry.first())
+        assertEquals(listOf(15), ahead.maneuvers.map { it.type })
+        assertEquals(2, ahead.maneuvers.single().beginShapeIndex)
+        assertEquals(555, ahead.distanceMeters)
+        assertEquals(50, ahead.durationSeconds)
+        // Nearest point ahead, not the next one.
+        assertEquals(points[8], rejoinRemainder(route, GeoPoint(43.008, -4.999), 0.0)!!.geometry.first())
+        assertNull(rejoinRemainder(route, points.last(), 0.0))
+        // Riding past point 4 within 100 m counts; a point beyond the window does not.
+        assertEquals(4 * step, passedAlong(route, GeoPoint(43.004, -4.9995), 0.0)!!, 1e-6)
+        assertNull(passedAlong(route, GeoPoint(43.004, -4.99), 0.0))
+        assertNull(passedAlong(route, points[9], 0.0, windowMeters = 500.0))
+    }
 }
 

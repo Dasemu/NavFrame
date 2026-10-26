@@ -198,7 +198,8 @@ fun mergeRouteLegs(parts: List<RouteResult>): RouteResult {
  */
 fun prependApproach(approach: RouteResult, route: RouteResult): RouteResult {
     val merged = mergeRouteLegs(listOf(approach, route))
-    return if (route.imported && route.maneuvers.isEmpty()) merged.copy(maneuvers = emptyList(), durationSeconds = 0) else merged
+    // Raw traces carry no travel time; road-routed imports keep it even if no maneuver is left ahead.
+    return if (route.imported && route.durationSeconds == 0) merged.copy(maneuvers = emptyList(), durationSeconds = 0) else merged
 }
 
 private fun validatePoint(point: GeoPoint) {

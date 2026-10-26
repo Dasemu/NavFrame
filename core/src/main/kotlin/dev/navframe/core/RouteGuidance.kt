@@ -279,6 +279,53 @@ private fun wrappedLongitude(value: Double): Double = ((value + 180) % 360 + 360
 const val IMPORTED_APPROACH_MIN_METERS = 150.0
 fun needsApproach(position: GeoPoint, route: RouteResult): Boolean =
     route.geometry.isNotEmpty() && earthDistance(position, route.geometry.first()) > IMPORTED_APPROACH_MIN_METERS
+/** Length of [route]'s geometry in metres, as measured by guidance. */
+fun routeLength(route: RouteResult): Double = route.geometry.zipWithNext().sumOf { (a, b) -> earthDistance(a, b) }
+
+/**
+ * Off an imported route, passing within [radiusMeters] of a later point counts as having reached it:
+ * returns the furthest such distance along [route] in the [windowMeters] after [fromMeters], or null.
+ */
+fun passedAlong(route: RouteResult, position: GeoPoint, fromMeters: Double, radiusMeters: Double = 100.0, windowMeters: Double = 3_000.0): Double? {
+    var along = 0.0
+    var passed: Double? = null
+    route.geometry.forEachIndexed { i, point ->
+        if (i > 0) along += earthDistance(route.geometry[i - 1], point)
+        if (along > fromMeters + windowMeters) return passed
+        if (along >= fromMeters && earthDistance(position, point) <= radiusMeters) passed = along
+    }
+    return passed
+}
+
+/**
+ * The rest of [route] from its point nearest to [position] among those in the [windowMeters] after
+ * [fromMeters] (never behind it), with maneuvers rebased and distance/duration prorated. Null when
+ * only the final point is left.
+ */
+fun rejoinRemainder(route: RouteResult, position: GeoPoint, fromMeters: Double, windowMeters: Double = 10_000.0): RouteResult? {
+    val cumulative = DoubleArray(route.geometry.size)
+    for (i in 1 until route.geometry.size) cumulative[i] = cumulative[i - 1] + earthDistance(route.geometry[i - 1], route.geometry[i])
+    val total = cumulative.last()
+    val start = cumulative.indexOfFirst { it >= fromMeters }.takeIf { it >= 0 } ?: return null
+    var best = start
+    var bestDistance = Double.POSITIVE_INFINITY
+    for (i in start until route.geometry.size) {
+        if (cumulative[i] > fromMeters + windowMeters) break
+        val distance = earthDistance(position, route.geometry[i])
+        if (distance < bestDistance) { best = i; bestDistance = distance }
+    }
+    if (best >= route.geometry.lastIndex) return null
+    if (best == 0) return route
+    val share = if (total > 0) (total - cumulative[best]) / total else 0.0
+    return route.copy(
+        geometry = route.geometry.drop(best),
+        maneuvers = route.maneuvers.filter { (it.beginShapeIndex ?: -1) >= best }.map {
+            it.copy(beginShapeIndex = it.beginShapeIndex?.minus(best), endShapeIndex = it.endShapeIndex?.minus(best))
+        },
+        distanceMeters = (route.distanceMeters * share).roundToInt().coerceAtLeast(1),
+        durationSeconds = (route.durationSeconds * share).roundToInt(),
+    )
+}
 private fun earthDistance(a: GeoPoint, b: GeoPoint): Double {
     val lat1 = Math.toRadians(a.latitude); val lat2 = Math.toRadians(b.latitude)
     val dlat = lat2 - lat1; val dlon = Math.toRadians(wrappedLongitude(b.longitude - a.longitude))

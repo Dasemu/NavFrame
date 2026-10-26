@@ -74,7 +74,7 @@ class ImportedRouteTest {
             assertTrue(service.hasActiveGuidance())
             assertSame(route.route, service.navigationState.value.route)
             service.requestReroute(); tick()
-            assertTrue(service.routeInfo.value.contains("no se modifica"))
+            assertTrue(service.routeInfo.value.contains("solo cuando te desvías"))
             assertSame(route.route, service.navigationState.value.route)
             assertNull(service.navigationState.value.nextManeuver)
             assertNull(service.navigationState.value.etaEpochMillis)
@@ -280,7 +280,7 @@ class ImportedRouteTest {
                 latitude = 43.34; longitude = -5.84; accuracy = 5f
                 time = System.currentTimeMillis(); elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
             }); tick()
-            service.requestReroute(); tick()
+            service.requestReroute(false); tick()
             assertEquals(GeoPoint(43.34, -5.84) to route.route.geometry.first(), engine.requests.last())
             val shown = TftService::class.java.getDeclaredField("shownRoute").apply { isAccessible = true }.get(service)!!
             val rerouted = shown.javaClass.getDeclaredMethod("getRoute").apply { isAccessible = true }.invoke(shown) as RouteResult
@@ -288,6 +288,41 @@ class ImportedRouteTest {
             assertEquals(route.route.geometry.last(), rerouted.geometry.last())
             assertTrue(rerouted.imported)
         } finally { activityController.destroy(); serviceController.destroy() }
+    }
+
+    @Test fun deviationFromAnImportedTraceRoutesBackToTheNearestPointAhead() {
+        val controller = Robolectric.buildService(TftService::class.java).create()
+        val service = controller.get()
+        service.mapRenderOverride = { _, _ -> TftFrame(encodedBytes = byteArrayOf(1), timestampMs = 0) }
+        try {
+            val application = RuntimeEnvironment.getApplication()
+            shadowOf(application).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            val manager = application.getSystemService(LocationManager::class.java)
+            shadowOf(manager).setProviderEnabled(LocationManager.GPS_PROVIDER, true)
+            fun fix(latitude: Double, longitude: Double) {
+                shadowOf(manager).simulateLocation(Location(LocationManager.GPS_PROVIDER).apply {
+                    this.latitude = latitude; this.longitude = longitude; accuracy = 5f
+                    time = System.currentTimeMillis(); elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+                }); tick()
+            }
+            val route = imported()
+            service.prepareImportedRoute(route); tick()
+            service.setPhoneVisible(true); tick()
+            fix(43.36, -5.85)
+            service.startRoute(); tick()
+            assertTrue(service.hasActiveGuidance())
+            val engine = RoadEngine()
+            service.routingEngineFactory = { engine }
+            fix(43.365, -5.847) // About 240 m east of the trace's midpoint.
+            service.requestReroute(false); tick()
+            assertEquals(GeoPoint(43.365, -5.847) to GeoPoint(43.365, -5.85), engine.requests.single())
+            val shown = TftService::class.java.getDeclaredField("shownRoute").apply { isAccessible = true }.get(service)!!
+            val rerouted = shown.javaClass.getDeclaredMethod("getRoute").apply { isAccessible = true }.invoke(shown) as RouteResult
+            assertEquals(GeoPoint(43.365, -5.847), rerouted.geometry.first())
+            assertEquals(route.route.geometry.last(), rerouted.geometry.last())
+            assertTrue(rerouted.imported)
+            assertTrue(rerouted.maneuvers.isEmpty())
+        } finally { controller.destroy() }
     }
 }
 

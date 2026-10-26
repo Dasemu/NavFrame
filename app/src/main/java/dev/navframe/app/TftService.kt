@@ -34,6 +34,11 @@ class TftService : Service() {
     private var reroutePaused = false
     /** True once the rider is past the leg prepended to reach an imported route's first point. */
     private var approachDone = false
+    /** Metres reached along the imported part still to ride (the plan's importedBase, or the route). */
+    private var importedProgressMeters = 0.0
+    private var importedLength: Pair<RouteResult, Double>? = null
+    private fun importedLength(route: RouteResult): Double =
+        importedLength?.takeIf { it.first === route }?.second ?: routeLength(route).also { importedLength = route to it }
     private var lastGpsFix: LocationFix? = null
     private var lastGpsElapsed = 0L
     private val mutableRouteInfo = MutableStateFlow("Sin ruta calculada")
@@ -701,6 +706,7 @@ class TftService : Service() {
         rerouteFailures = 0
         reroutePaused = false
         approachDone = false
+        importedProgressMeters = 0.0
         if (plan.demo) startDemo(true, preserveRoute = true) else startGps(true, preserveRoute = true)
         if (plan.route.imported) {
             mutableRouteInfo.value = if (plan.route.maneuvers.isNotEmpty()) "Ruta GPX iniciada · %.1f km · indicaciones de giro activas".format(java.util.Locale.ROOT, plan.route.distanceMeters / 1000.0)
@@ -740,16 +746,40 @@ class TftService : Service() {
             val fix = lastGpsFix ?: return state.copy(route = plan.route, navigationStatus = NavigationStatus.GPS_LOST)
             requireNotNull(guidance).update(fix, SystemClock.elapsedRealtime(), System.currentTimeMillis(), SystemClock.elapsedRealtime() - lastGpsElapsed)
         }
-        plan.importedBase?.let { base -> guided.remainingDistanceMeters?.let { if (guided.navigationStatus != NavigationStatus.OFF_ROUTE && it <= base.distanceMeters) approachDone = true } }
+        if (!demo && plan.route.imported) trackImportedProgress(plan, guided)
         return if (rerouteJob?.isActive == true && guided.navigationStatus != NavigationStatus.GPS_LOST) guided.copy(navigationStatus = NavigationStatus.REROUTING, nextManeuver = null, distanceToNextManeuverMeters = null, remainingDistanceMeters = null, etaEpochMillis = null) else guided
+    }
+
+    private fun trackImportedProgress(plan: RoutePlan, state: NavigationState) {
+        val base = plan.importedBase ?: plan.route
+        val length = importedLength(base)
+        val remaining = state.remainingDistanceMeters
+        if (state.navigationStatus != NavigationStatus.OFF_ROUTE && remaining != null && remaining <= length) {
+            approachDone = true
+            importedProgressMeters = maxOf(importedProgressMeters, length - remaining)
+        }
+        // Off the route, passing close to a later point and heading on counts as having reached it.
+        if (state.navigationStatus == NavigationStatus.OFF_ROUTE && (approachDone || plan.importedBase == null))
+            passedAlong(base, state.position, importedProgressMeters)?.let { importedProgressMeters = maxOf(importedProgressMeters, it) }
     }
 
     fun requestReroute(manual: Boolean = true) {
         val plan = shownRoute ?: return
-        // Only the leg to an imported route's first point is recalculated; the GPX itself is kept.
-        val approachBase = plan.importedBase?.takeIf { plan.route.imported && !approachDone }
-        if (plan.route.imported && approachBase == null) {
-            if (manual) mutableRouteInfo.value = "Ruta GPX · vuelve al trazado; no se modifica ni recalcula la ruta importada."
+        // An imported route is never replaced: only the way back to it is calculated. Before reaching
+        // it, that is its first point; afterwards, the nearest point ahead of the progress made.
+        if (plan.route.imported && manual && latestNavigationState.navigationStatus != NavigationStatus.OFF_ROUTE) {
+            if (rerouteJob?.isActive != true) mutableRouteInfo.value = "Ruta GPX · se recalcula el camino de vuelta solo cuando te desvías."
+            return
+        }
+        val rejoin = if (!plan.route.imported) null else {
+            val base = plan.importedBase ?: plan.route
+            val position = lastGpsFix?.position
+            if (plan.importedBase != null && !approachDone) base
+            else position?.let { rejoinRemainder(base, it, importedProgressMeters) }
+        }
+        if (plan.route.imported && rejoin == null) {
+            if (manual) mutableRouteInfo.value = "Ruta GPX · estás cerca del final; continúa hasta el último punto."
+            else SystemClock.elapsedRealtime().let { if (reroutePolicy.shouldRequest(latestNavigationState, it)) { reroutePolicy.markRequested(it); reroutePolicy.markFinished(it) } } // Cool down.
             return
         }
         if (plan.demo || routePreview || rerouteJob?.isActive == true) return
@@ -773,11 +803,13 @@ class TftService : Service() {
             var retryAfterMs = 0L
             try {
                 val engine = routingEngineFactory(routingEndpoint())
-                val result = if (approachBase != null) prependApproach(engine.calculateRoute(fix.position, approachBase.geometry.first(), APPROACH_OPTIONS), approachBase)
+                val result = if (rejoin != null) prependApproach(engine.calculateRoute(fix.position, rejoin.geometry.first(), APPROACH_OPTIONS), rejoin)
                     else engine.calculateRoute(fix.position, plan.route.destination ?: plan.route.geometry.last(), plan.options)
                 ensureActive()
                 if (epoch != navigationEpoch || generation != routeGeneration || shownRoute !== plan) return@launch
-                val replacement = RoutePlan(result, fix.position, false, plan.options, approachBase)
+                val replacement = RoutePlan(result, fix.position, false, plan.options, rejoin)
+                // A new base starts where the rider rejoins: the route has been reached.
+                if (rejoin != null && rejoin !== plan.importedBase) { importedProgressMeters = 0.0; approachDone = true }
                 shownRoute = replacement
                 if (!preparedDestinationDirty && routePlan === plan) routePlan = replacement
                 guidance = RouteGuidanceTracker(result)
