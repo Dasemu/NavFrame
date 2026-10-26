@@ -18,7 +18,7 @@ The result has real turn instructions, voice announcements and an ETA. It is not
 
 ## Starting away from the first point
 
-On start, if the rider is more than 150 m from the route's first point, the app calculates a road leg from the current position to that point (fastest motorcycle route, avoiding unpaved roads) and prepends it, so guidance begins where the rider actually is. A dense trace stays a trace: the leg extends the line to follow, without turn instructions or ETA. The leg is not recalculated if you leave it. If the leg cannot be calculated, navigation starts on the imported route alone and the app asks the rider to head to the first point. Pressing start again later recalculates the leg from the new position.
+On start, if the rider is more than 150 m from the route's first point, the app calculates a road leg from the current position to that point (fastest motorcycle route, avoiding unpaved roads) and prepends it, so guidance begins where the rider actually is. A dense trace stays a trace: the leg extends the line to follow, without turn instructions or ETA. If you leave that leg before reaching the route, it is recalculated from your position with the normal off-route policy (sustained deviation, 30 s between attempts). Once you are on the imported route, deviations are never rerouted. If the leg cannot be calculated, navigation starts on the imported route alone and the app asks the rider to head to the first point. Pressing start again later recalculates the leg from the new position.
 
 ## Following a trace
 

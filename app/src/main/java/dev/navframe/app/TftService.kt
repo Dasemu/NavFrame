@@ -32,6 +32,8 @@ class TftService : Service() {
     private val reroutePolicy = ReroutePolicy()
     private var rerouteFailures = 0
     private var reroutePaused = false
+    /** True once the rider is past the leg prepended to reach an imported route's first point. */
+    private var approachDone = false
     private var lastGpsFix: LocationFix? = null
     private var lastGpsElapsed = 0L
     private val mutableRouteInfo = MutableStateFlow("Sin ruta calculada")
@@ -642,7 +644,7 @@ class TftService : Service() {
         routeJob?.cancel()
         routeJob = scope.launch {
             try {
-                val approach = routingEngineFactory(routingEndpoint()).calculateRoute(position, base.geometry.first(), RouteOptions(profile = RouteProfile.FASTEST, avoidUnpaved = true))
+                val approach = routingEngineFactory(routingEndpoint()).calculateRoute(position, base.geometry.first(), APPROACH_OPTIONS)
                 ensureActive()
                 if (generation != preparedGeneration || routePlan !== plan) return@launch
                 val route = prependApproach(approach, base)
@@ -698,6 +700,7 @@ class TftService : Service() {
         reroutePolicy.reset()
         rerouteFailures = 0
         reroutePaused = false
+        approachDone = false
         if (plan.demo) startDemo(true, preserveRoute = true) else startGps(true, preserveRoute = true)
         if (plan.route.imported) {
             mutableRouteInfo.value = if (plan.route.maneuvers.isNotEmpty()) "Ruta GPX iniciada · %.1f km · indicaciones de giro activas".format(java.util.Locale.ROOT, plan.route.distanceMeters / 1000.0)
@@ -737,12 +740,15 @@ class TftService : Service() {
             val fix = lastGpsFix ?: return state.copy(route = plan.route, navigationStatus = NavigationStatus.GPS_LOST)
             requireNotNull(guidance).update(fix, SystemClock.elapsedRealtime(), System.currentTimeMillis(), SystemClock.elapsedRealtime() - lastGpsElapsed)
         }
+        plan.importedBase?.let { base -> guided.remainingDistanceMeters?.let { if (guided.navigationStatus != NavigationStatus.OFF_ROUTE && it <= base.distanceMeters) approachDone = true } }
         return if (rerouteJob?.isActive == true && guided.navigationStatus != NavigationStatus.GPS_LOST) guided.copy(navigationStatus = NavigationStatus.REROUTING, nextManeuver = null, distanceToNextManeuverMeters = null, remainingDistanceMeters = null, etaEpochMillis = null) else guided
     }
 
     fun requestReroute(manual: Boolean = true) {
         val plan = shownRoute ?: return
-        if (plan.route.imported) {
+        // Only the leg to an imported route's first point is recalculated; the GPX itself is kept.
+        val approachBase = plan.importedBase?.takeIf { plan.route.imported && !approachDone }
+        if (plan.route.imported && approachBase == null) {
             if (manual) mutableRouteInfo.value = "Ruta GPX · vuelve al trazado; no se modifica ni recalcula la ruta importada."
             return
         }
@@ -766,10 +772,12 @@ class TftService : Service() {
         rerouteJob = scope.launch {
             var retryAfterMs = 0L
             try {
-                val result = routingEngineFactory(routingEndpoint()).calculateRoute(fix.position, plan.route.destination ?: plan.route.geometry.last(), plan.options)
+                val engine = routingEngineFactory(routingEndpoint())
+                val result = if (approachBase != null) prependApproach(engine.calculateRoute(fix.position, approachBase.geometry.first(), APPROACH_OPTIONS), approachBase)
+                    else engine.calculateRoute(fix.position, plan.route.destination ?: plan.route.geometry.last(), plan.options)
                 ensureActive()
                 if (epoch != navigationEpoch || generation != routeGeneration || shownRoute !== plan) return@launch
-                val replacement = RoutePlan(result, fix.position, false, plan.options)
+                val replacement = RoutePlan(result, fix.position, false, plan.options, approachBase)
                 shownRoute = replacement
                 if (!preparedDestinationDirty && routePlan === plan) routePlan = replacement
                 guidance = RouteGuidanceTracker(result)
@@ -1047,6 +1055,7 @@ class TftService : Service() {
         const val ACTION_REAL = "dev.navframe.CONNECT_REAL"
         const val ACTION_GPS = "dev.navframe.START_GPS"
         const val ACTION_MAP_GPS = "dev.navframe.START_MAP_GPS"
+        private val APPROACH_OPTIONS = RouteOptions(profile = RouteProfile.FASTEST, avoidUnpaved = true)
         const val ACTION_ROUTE_GPS = "dev.navframe.START_ROUTE_GPS"
         const val ACTION_STOP_NAVIGATION = "dev.navframe.STOP_NAVIGATION"
         const val ACTION_STOP = "dev.navframe.DISCONNECT"

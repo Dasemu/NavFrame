@@ -274,6 +274,19 @@ class ImportedRouteTest {
             assertEquals(route.route.geometry.last(), started.geometry.last())
             assertTrue(started.maneuvers.isEmpty())
             assertNull(service.navigationState.value.etaEpochMillis)
+
+            // Leaving the leg to the first point recalculates only that leg.
+            shadowOf(manager).simulateLocation(Location(LocationManager.GPS_PROVIDER).apply {
+                latitude = 43.34; longitude = -5.84; accuracy = 5f
+                time = System.currentTimeMillis(); elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+            }); tick()
+            service.requestReroute(); tick()
+            assertEquals(GeoPoint(43.34, -5.84) to route.route.geometry.first(), engine.requests.last())
+            val shown = TftService::class.java.getDeclaredField("shownRoute").apply { isAccessible = true }.get(service)!!
+            val rerouted = shown.javaClass.getDeclaredMethod("getRoute").apply { isAccessible = true }.invoke(shown) as RouteResult
+            assertEquals(GeoPoint(43.34, -5.84), rerouted.geometry.first())
+            assertEquals(route.route.geometry.last(), rerouted.geometry.last())
+            assertTrue(rerouted.imported)
         } finally { activityController.destroy(); serviceController.destroy() }
     }
 }
