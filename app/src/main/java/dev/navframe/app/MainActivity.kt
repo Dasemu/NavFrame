@@ -23,6 +23,7 @@ open class MainActivity : Activity() {
     private var searchJob: Job? = null
     private var positionWait: Job? = null
     private var importJob: Job? = null
+    private var lastImportedRoute: ImportedRoute? = null
     private var pendingImportUri: Uri? = null
     private var searchGeneration = 0L
     private var updatingDestination = false
@@ -356,6 +357,7 @@ open class MainActivity : Activity() {
                 val current = service ?: run { hint.text = "Servicio no disponible · vuelve a cargar el GPX"; return@launch }
                 cancelSearch(); routeDialog?.dismiss()
                 current.prepareImportedRoute(imported)
+                lastImportedRoute = imported
                 destination = null; destinationName = ""
                 hint.text = "Ruta GPX cargada"
                 showImportedRouteSheet(imported.name)
@@ -373,6 +375,11 @@ open class MainActivity : Activity() {
         val box = column().apply { setPadding(dp(20), dp(16), dp(20), dp(16)) }
         box.addView(label(name ?: "Ruta GPX", 20f))
         box.addView(routeInfo)
+        lastImportedRoute?.takeIf { !it.isTrack && it.route.geometry.size in 2..50 }?.let { imported ->
+            box.addView(button("Calcular por carreteras · evitar autopistas") {
+                service?.calculateImportedStops(imported)
+            })
+        }
         routeLoading = ProgressBar(this).apply { visibility = View.GONE }
         box.addView(routeLoading)
         retryRouteButton = null
