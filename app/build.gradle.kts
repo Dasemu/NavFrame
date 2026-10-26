@@ -15,7 +15,7 @@ android {
         applicationId = "dev.navframe.app"
         minSdk = 26
         targetSdk = 35
-        versionName = "0.13.7"
+        versionName = "0.14.6"
         versionCode = 23
     }
     if (hasReleaseSigning) {

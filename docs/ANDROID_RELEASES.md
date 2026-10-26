@@ -19,6 +19,15 @@ The major component only changes on the owner's explicit request. For that excep
 
 The policy uses `pull_request_target` with read-only permissions and executes only the base branch's trusted script. It reads PR version declarations with `git show` without building or executing PR code, and never uses production secrets. The existing Android checks continue using the ordinary `pull_request` event. Enable **Branch and version policy** as a required status check in branch protection/rulesets for both destinations to prevent merging a failed policy check. Install this policy on both branches before relying on it for development PRs. If another PR changes the destination version, update the branch/version and rerun the check before merging.
 
+Do not compute the bump by hand. From the PR's source branch, fetch the destination and let the policy script write the required versionName, versionCode and README version, then commit the result:
+
+```sh
+git fetch origin main development
+python3 scripts/check_version_policy.py --write --base-ref origin/DESTINATION --base-branch DESTINATION --head-branch SOURCE
+```
+
+For a promotion, that is `--base-ref origin/main --base-branch main --head-branch development`, committed on `development` before the promotion PR is merged. A failed check prints the same command with the values filled in. Rerun it whenever the destination moves (for example after another hotfix lands on `main`).
+
 CI validates the committed bump rather than pushing version commits with privileged tokens. This keeps the exact app version reviewable in the PR and works for fork contributions as well.
 
 ## Branch outputs
